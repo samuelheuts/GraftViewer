@@ -1,4 +1,4 @@
-# GraftView
+# GraftViewer
 
 An interactive simulator of coronary artery bypass graft configurations. Define each graft by conduit, origin (in situ, ascending aorta, or Y/T composite off another graft) and ordered insertions on the coronary tree, then view the result as a simulated coronary angiogram at any C-arm angle and as a 3D model, with selective injection of the native coronaries or of each graft, a live atlas of the standard angiographic projections, and a search for the projection that best displays a chosen segment or anastomosis.
 
