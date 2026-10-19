@@ -1131,18 +1131,23 @@ footer a { color: var(--fg); }
       push(`<text x="${LX}" y="${ly}" font-size="12" fill="#6b5f58" letter-spacing="1.2">LESIONS</text>`); ly += 18;
       lesions.forEach(l => {
         const txt = lesionText(l);
+        const words = txt.split(' '); let line = '', lines = [];
+        words.forEach(wd => { if ((line + ' ' + wd).trim().length > 38) { lines.push(line.trim()); line = wd; } else line += ' ' + wd; });
+        if (line.trim()) lines.push(line.trim());
         push(`<circle cx="${LX + 6}" cy="${ly - 4}" r="4" fill="${l.significant ? '#dc2626' : (l.severity > 0 || l.ffr != null || l.ifr != null || l.rfr != null) ? '#f59e0b' : '#4b5563'}"/>`);
-        push(`<text x="${LX + 18}" y="${ly}" font-size="13" fill="#1f1f1f">${esc(txt)}</text>`); ly += 17;
+        lines.forEach((ln, i) => { push(`<text x="${LX + 18}" y="${ly + i * 15}" font-size="13" fill="#1f1f1f">${esc(ln)}</text>`); });
+        ly += 17 + (lines.length - 1) * 15;
       });
     }
-    const ky = H - 150;
+    const ky = H - 164;
     push(`<g font-size="12" fill="#6b5f58">
       <circle cx="${LX + 6}" cy="${ky}" r="5.5" fill="#444"/><text x="${LX + 18}" y="${ky + 4}">end-to-side anastomosis</text>
       <rect x="${LX + 1}" y="${ky + 16}" width="11" height="11" fill="#fff" stroke="#444" stroke-width="2.5"/><text x="${LX + 18}" y="${ky + 26}">side-to-side (sequential)</text>
       <circle cx="${LX + 6}" cy="${ky + 44}" r="5.5" fill="#fff" stroke="#444" stroke-width="2.5"/><text x="${LX + 18}" y="${ky + 48}">proximal anastomosis on the aorta</text>
       <rect x="${LX + 1}" y="${ky + 61}" width="10" height="10" transform="rotate(45 ${LX + 6} ${ky + 66})" fill="#fff" stroke="#444" stroke-width="2.5"/><text x="${LX + 18}" y="${ky + 70}">composite T/Y take-off</text>
       <line x1="${LX}" y1="${ky + 88}" x2="${LX + 12}" y2="${ky + 88}" stroke="#8a8a8a" stroke-width="2.5" stroke-dasharray="5 4"/><text x="${LX + 18}" y="${ky + 92}">posterior vessel (behind the heart)</text>
-      <path d="M ${LX + 1} ${ky + 103} L ${LX + 6} ${ky + 109} L ${LX + 11} ${ky + 103} Z" fill="#dc2626"/><text x="${LX + 18}" y="${ky + 112}">stenosis · red = significant (FFR ≤0.80; else iFR/RFR ≤0.89; else ≥70%, LM ≥50%)</text>
+      <path d="M ${LX + 1} ${ky + 103} L ${LX + 6} ${ky + 109} L ${LX + 11} ${ky + 103} Z" fill="#dc2626"/><text x="${LX + 18}" y="${ky + 112}">stenosis · red = significant, orange = not</text>
+      <text x="${LX + 18}" y="${ky + 126}">(FFR ≤0.80; else iFR/RFR ≤0.89; else ≥70%, LM ≥50%)</text>
     </g>`);
     push(`<text x="${LX}" y="${H - 20}" font-size="10.5" fill="#9a8f8a">Projection of the BodyParts3D-derived model, ${view.alpha >= 0 ? 'LAO' : 'RAO'} ${Math.abs(view.alpha)}° ${view.beta >= 0 ? 'CRA' : 'CAU'} ${Math.abs(view.beta)}°. Not to scale.</text>`);
     push(`<text x="${LX}" y="${H - 6}" font-size="10.5" fill="#9a8f8a">GraftViewer · ${esc(model.footer || 'educational simulation')}</text>`);
@@ -2072,7 +2077,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
     if (l.ifr != null) parts.push('iFR ' + l.ifr.toFixed(2));
     if (l.stent) parts.push('stent');
     const segName = l.seg === 'p' ? 'proximal ' : l.seg === 'm' ? 'mid ' : l.seg === 'd' ? 'distal ' : '';
-    const verdict = l.basis ? (l.significant ? ' — significant' : ' — not significant') + (l.basis !== 'visual' ? ' by ' + (l.basis === 'ifr' ? 'iFR' : l.basis.toUpperCase()) : '') : '';
+    const verdict = l.basis ? (l.significant ? ' — significant' : ' — not significant') + (l.basis !== 'visual' ? ' (' + (l.basis === 'ifr' ? 'iFR' : l.basis.toUpperCase()) + ')' : '') : '';
     return segName + GV.dn(l.vessel) + (parts.length ? ' ' + parts.join(', ') : '') + verdict;
   }
 
