@@ -99,6 +99,18 @@ button.chip.active .ang { color: var(--accent); }
 .toolbar select { padding: 6px 9px; font-size: 12.5px; }
 
 .setup { display: grid; grid-template-columns: 1.7fr 1fr; gap: 14px; }
+.lesions-row { grid-template-columns: 1fr; }
+.lesion-table { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 14px; }
+.lrow { display: grid; grid-template-columns: 7.5em repeat(4, 1fr) auto; gap: 6px; align-items: center; padding: 4px 6px; border-radius: 6px; }
+.lrow.has { background: var(--panel2); }
+.lrow.sig { box-shadow: inset 3px 0 0 var(--danger); }
+.lrow .ln { font-size: 12.5px; font-weight: 600; }
+.lrow .ln small { display: block; font-weight: 400; color: var(--muted); font-size: 10.5px; }
+.lrow input[type="number"] { width: 100%; min-width: 0; font: 500 12px var(--font-mono); color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 4px 5px; -moz-appearance: textfield; }
+.lrow input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+.lrow input.sigv { color: var(--danger); border-color: var(--danger); }
+.lrow label.st { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
+.lhead { display: grid; grid-template-columns: 7.5em repeat(4, 1fr) auto; gap: 6px; padding: 0 6px 2px; font-size: 10.5px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; grid-column: 1 / -1; }
 .carm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
 .carm-left { display: grid; gap: 12px; }
 .g-actions .grow { flex: 1 1 auto; }
@@ -170,6 +182,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 footer { color: var(--muted); font-size: 12px; max-width: 80ch; line-height: 1.5; }
 footer a { color: var(--fg); }
 .stage .loading { position: absolute; inset: 0; display: grid; place-items: center; font: 500 12px var(--font-mono); color: var(--muted); letter-spacing: 0.04em; pointer-events: none; }
+.stage .loading[hidden] { display: none; }
 @media (max-width: 1000px) {
   .views, .setup, .carm-grid { grid-template-columns: 1fr; }
   .stage-wrap .stage { width: min(100%, 92vw); }
@@ -184,6 +197,14 @@ footer a { color: var(--fg); }
     <div class="brand"><h1>GraftViewer</h1><span class="tag">CABG · angio + 3D</span></div>
     <div class="credit">Created by <b>Sam Heuts</b>, Maastricht UMC+ · <span class="email" id="email">sam.heuts@mumc.nl</span> <button class="small" id="copyEmail" type="button" aria-label="Copy e-mail address">Copy</button></div>
   </header>
+
+  <section class="setup lesions-row">
+    <div class="card" aria-label="Coronary lesions">
+      <h3>Coronary lesions <small>— per segment: visual stenosis, FFR, RFR, iFR, previous stent (leave blank = none)</small></h3>
+      <div class="lesion-table" id="lesionTable"></div>
+      <div class="g-actions"><button class="small" id="lesClear">Clear lesions</button><span class="hint-inline" id="lesSummary"></span></div>
+    </div>
+  </section>
 
   <section class="setup">
     <div class="card" aria-label="Grafts">
@@ -205,7 +226,6 @@ footer a { color: var(--fg); }
       <div class="anat">
         <label>Dominance <select id="dom"><option value="right">Right</option><option value="left">Left</option><option value="co">Co-dominant</option></select></label>
         <label><input type="checkbox" id="ramus"> Anterolateral branch (AL / ramus intermedius)</label>
-        <label><input type="checkbox" id="lesions" checked> Stenoses on grafted vessels</label>
       </div>
       <div class="legend" id="legend"></div>
     </div>
@@ -560,6 +580,22 @@ footer a { color: var(--fg); }
     return { points: pts, radii, marks, inflowPoint, kind0: kind, inflowU: nearestU(pts, ctrl[Math.max(0, inflowEnd - 1)]) };
   }
 
+  // ---------- lesion segments ----------
+  // vessels with three segments (proximal/mid/distal) and single-segment branches; u = position along the vessel
+  const SEGMENT_U = { p: 0.18, m: 0.46, d: 0.74, single: 0.30 };
+  const SEGMENTED = ['LAD', 'LCx', 'RCA'];
+  const LESION_VESSELS = ['LM', 'LAD', 'D1', 'D2', 'RI', 'LCx', 'OM1', 'OM2', 'RCA', 'PDA', 'PL'];
+  function lesionSegments(opts) {   // list of {key, vessel, seg, label} available for the current anatomy
+    const out = [];
+    LESION_VESSELS.forEach(v => {
+      if (v === 'RI' && !(opts && opts.ramus)) return;
+      if (SEGMENTED.includes(v)) ['p', 'm', 'd'].forEach(sg => out.push({ key: v + ':' + sg, vessel: v, seg: sg, label: (sg === 'p' ? 'proximal ' : sg === 'm' ? 'mid ' : 'distal ') + dn(v) }));
+      else out.push({ key: v, vessel: v, seg: 'single', label: dn(v) });
+    });
+    return out;
+  }
+  const num = (x) => (x === '' || x == null || isNaN(+x)) ? null : +x;
+
   // ---------- full model ----------
   function buildModel(opts) {
     if (!D) throw new Error('GV.init(anatomy) must be called first');
@@ -594,15 +630,19 @@ footer a { color: var(--fg); }
     }
     grafts.forEach(g => { if (!g.points) { g.points = []; g.radii = []; g.marks = []; } });
 
+    // lesions and stents: user-defined per segment. opts.lesions = { '<segmentKey>': {sten, ffr, rfr, ifr, stent} }
+    // segment keys: 'LAD:p' | 'LAD:m' | 'LAD:d' | 'OM1' ... ; u along the vessel from SEGMENT_U
     const lesions = [];
-    grafts.forEach(g => (g.marks || []).forEach(m => {
-      const v = byId[m.target]; if (!v) return;
-      let lv = v, lu = Math.max(0.10, m.vesselU - 0.28);
-      if (m.target === 'LAD') lu = 0.22;
-      if ((m.target === 'PDA' || m.target === 'PL') && byId[v.parent]) { lv = byId[v.parent]; lu = lv.id === 'RCA' ? 0.46 : 0.62; }
-      if (['D1', 'D2', 'OM1', 'OM2', 'AM', 'RI'].includes(m.target)) lu = 0.18;
-      if (!lesions.some(l => l.vessel === lv.id && Math.abs(l.u - lu) < 0.05)) lesions.push({ vessel: lv.id, u: lu, severity: 0.72 });
-    }));
+    Object.keys(opts.lesions || {}).forEach(key => {
+      const L = opts.lesions[key]; if (!L) return;
+      const [vid, seg] = key.split(':');
+      const v = byId[vid]; if (!v) return;
+      const u = SEGMENT_U[seg || 'single'];
+      const sten = Math.max(0, Math.min(100, +L.sten || 0)) / 100;
+      const hasPhys = [L.ffr, L.rfr, L.ifr].some(x => x !== '' && x != null && !isNaN(+x));
+      if (sten > 0 || hasPhys || L.stent) lesions.push({ vessel: vid, seg: seg || 'single', key, u, severity: sten, ffr: num(L.ffr), rfr: num(L.rfr), ifr: num(L.ifr), stent: !!L.stent,
+        significant: sten >= 0.70 || (num(L.ffr) != null && num(L.ffr) <= 0.80) || (num(L.ifr) != null && num(L.ifr) <= 0.89) || (num(L.rfr) != null && num(L.rfr) <= 0.89) });
+    });
 
     const wires = grafts.length ? LM.wires.map(w => Object.assign({}, w)) : [];
     const clips = [];
@@ -767,7 +807,7 @@ footer a { color: var(--fg); }
     ]
   };
 
-  const api = { SITE_U, SITE_NAME, DISPLAY, LONG, dn, TARGET_ORDER, init, cyl, surf, outward, smoothCurve, tangentAt, pointAtU, nearestU, buildModel, detectorDir, viewLabel, parseConfig, graftLabel, configToText,
+  const api = { SITE_U, SITE_NAME, DISPLAY, LONG, dn, TARGET_ORDER, SEGMENT_U, lesionSegments, init, cyl, surf, outward, smoothCurve, tangentAt, pointAtU, nearestU, buildModel, detectorDir, viewLabel, parseConfig, graftLabel, configToText,
     PRESETS, STANDARD_VIEWS, TARGETS, CONDUITS, get data() { return D; }, get phi() { return PHI; }, vec: { add, sub, mul, dot, cross, len, norm, lerp, clamp } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.GV = api;
 })(typeof window !== 'undefined' ? window : this);
@@ -964,6 +1004,38 @@ footer a { color: var(--fg); }
       push(`<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="15" font-weight="700" fill="#1f1f1f">${esc(v.name)}</text>`);
     });
 
+    // ---- lesions and stents on the native vessels ----
+    const lesions = model.lesions || [];
+    const lesionText = model.lesionText || (l => l.vessel);
+    lesions.forEach(l => {
+      const v = natives.find(x => x.id === l.vessel); if (!v) return;
+      const n = v.points.length, i = Math.round(l.u * (n - 1));
+      const p = proj(v.points[i]); const q = proj(v.points[Math.min(n - 1, i + 3)]);
+      let tx = q[0] - p[0], ty = q[1] - p[1]; const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+      const nx = -ty, ny = tx;
+      if (l.stent) {   // hatched sleeve along the vessel
+        const half = 13, w = 7;
+        const a = [p[0] - tx * half, p[1] - ty * half], b = [p[0] + tx * half, p[1] + ty * half];
+        push(`<path d="M ${(a[0] + nx * w).toFixed(1)} ${(a[1] + ny * w).toFixed(1)} L ${(b[0] + nx * w).toFixed(1)} ${(b[1] + ny * w).toFixed(1)} L ${(b[0] - nx * w).toFixed(1)} ${(b[1] - ny * w).toFixed(1)} L ${(a[0] - nx * w).toFixed(1)} ${(a[1] - ny * w).toFixed(1)} Z" fill="#ffffff" stroke="#4b5563" stroke-width="1.6"/>`);
+        for (let k = -2; k <= 2; k++) { const c = [p[0] + tx * k * 5.5, p[1] + ty * k * 5.5]; push(`<line x1="${(c[0] + nx * w).toFixed(1)}" y1="${(c[1] + ny * w).toFixed(1)}" x2="${(c[0] - nx * w + tx * 4).toFixed(1)}" y2="${(c[1] - ny * w + ty * 4).toFixed(1)}" stroke="#4b5563" stroke-width="1.2"/>`); }
+      }
+      if (l.severity > 0) {   // stenosis: paired wedges narrowing the lumen, red when significant
+        const sev = l.severity, len = 9 + 8 * sev, depth = 4 + 7 * sev;
+        const col = l.significant ? '#dc2626' : '#f59e0b';
+        [1, -1].forEach(sgn => {
+          const base1 = [p[0] - tx * len + nx * sgn * (depth + 3), p[1] - ty * len + ny * sgn * (depth + 3)];
+          const base2 = [p[0] + tx * len + nx * sgn * (depth + 3), p[1] + ty * len + ny * sgn * (depth + 3)];
+          const tip = [p[0] + nx * sgn * (depth - depth * sev * 0.9), p[1] + ny * sgn * (depth - depth * sev * 0.9)];
+          push(`<path d="M ${base1[0].toFixed(1)} ${base1[1].toFixed(1)} L ${tip[0].toFixed(1)} ${tip[1].toFixed(1)} L ${base2[0].toFixed(1)} ${base2[1].toFixed(1)} Z" fill="${col}" stroke="#ffffff" stroke-width="1"/>`);
+        });
+        const lab = Math.round(sev * 100) + '%';
+        const lx = p[0] + nx * (depth + 16), ly = p[1] + ny * (depth + 16) + 4;
+        push(`<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="11.5" font-weight="700" fill="#ffffff" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round">${lab}</text><text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="11.5" font-weight="700" fill="${col}">${lab}</text>`);
+      } else if (!l.stent && (l.ffr != null || l.ifr != null || l.rfr != null)) {
+        push(`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="5" fill="none" stroke="${l.significant ? '#dc2626' : '#f59e0b'}" stroke-width="2.2"/>`);
+      }
+    });
+
     // ---- grafts: real 3D routes projected ----
     const byId = {}; grafts.forEach(g => byId[g.id] = g);
     const order = []; const seen = new Set(); let guard = 0;
@@ -1021,13 +1093,23 @@ footer a { color: var(--fg); }
       lines.forEach((ln, i) => push(`<text x="${LX + 30}" y="${ly + 19 + i * 17}" font-size="13.5" fill="#1f1f1f">${i === 0 ? '→ ' : '   '}${esc(ln)}</text>`));
       ly += 34 + lines.length * 17;
     });
-    const ky = H - 128;
+    if (lesions.length) {
+      ly += 6;
+      push(`<text x="${LX}" y="${ly}" font-size="12" fill="#6b5f58" letter-spacing="1.2">LESIONS</text>`); ly += 18;
+      lesions.forEach(l => {
+        const txt = lesionText(l);
+        push(`<circle cx="${LX + 6}" cy="${ly - 4}" r="4" fill="${l.significant ? '#dc2626' : (l.severity > 0 || l.ffr != null || l.ifr != null || l.rfr != null) ? '#f59e0b' : '#4b5563'}"/>`);
+        push(`<text x="${LX + 18}" y="${ly}" font-size="13" fill="#1f1f1f">${esc(txt)}</text>`); ly += 17;
+      });
+    }
+    const ky = H - 150;
     push(`<g font-size="12" fill="#6b5f58">
       <circle cx="${LX + 6}" cy="${ky}" r="5.5" fill="#444"/><text x="${LX + 18}" y="${ky + 4}">end-to-side anastomosis</text>
       <rect x="${LX + 1}" y="${ky + 16}" width="11" height="11" fill="#fff" stroke="#444" stroke-width="2.5"/><text x="${LX + 18}" y="${ky + 26}">side-to-side (sequential)</text>
       <circle cx="${LX + 6}" cy="${ky + 44}" r="5.5" fill="#fff" stroke="#444" stroke-width="2.5"/><text x="${LX + 18}" y="${ky + 48}">proximal anastomosis on the aorta</text>
       <rect x="${LX + 1}" y="${ky + 61}" width="10" height="10" transform="rotate(45 ${LX + 6} ${ky + 66})" fill="#fff" stroke="#444" stroke-width="2.5"/><text x="${LX + 18}" y="${ky + 70}">composite T/Y take-off</text>
       <line x1="${LX}" y1="${ky + 88}" x2="${LX + 12}" y2="${ky + 88}" stroke="#8a8a8a" stroke-width="2.5" stroke-dasharray="5 4"/><text x="${LX + 18}" y="${ky + 92}">posterior vessel (behind the heart)</text>
+      <path d="M ${LX + 1} ${ky + 103} L ${LX + 6} ${ky + 109} L ${LX + 11} ${ky + 103} Z" fill="#dc2626"/><text x="${LX + 18}" y="${ky + 112}">stenosis · red = significant (≥70%, FFR ≤0.80, iFR/RFR ≤0.89)</text>
     </g>`);
     push(`<text x="${LX}" y="${H - 20}" font-size="10.5" fill="#9a8f8a">Projection of the BodyParts3D-derived model, ${view.alpha >= 0 ? 'LAO' : 'RAO'} ${Math.abs(view.alpha)}° ${view.beta >= 0 ? 'CRA' : 'CAU'} ${Math.abs(view.beta)}°. Not to scale.</text>`);
     push(`<text x="${LX}" y="${H - 6}" font-size="10.5" fill="#9a8f8a">GraftViewer · ${esc(model.footer || 'educational simulation')}</text>`);
@@ -1066,7 +1148,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
   // ---------------- state ----------------
   const state = {
     alpha: 40, beta: 35, injection: 'all', fovCm: 25, pan: [0, 0],
-    grafts: [], dominance: 'right', ramus: false, lesions: true,
+    grafts: [], dominance: 'right', ramus: false, lesions: {},
     labelsA: true, colour: false, ghost: false, hardware: false, fore: false, soi: '',
     labels3: true, see: true, chest: false, detector: true, linked: true
   };
@@ -1075,6 +1157,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
     if (saved && typeof saved === 'object') {
       if (typeof saved.cfg === 'string') $('cfg').value = saved.cfg;
       if (typeof saved.ramus === 'boolean') state.ramus = saved.ramus;
+      if (saved.lesions && typeof saved.lesions === 'object') state.lesions = saved.lesions;
       if (typeof saved.alpha === 'number') state.alpha = clamp(saved.alpha, -90, 90);
       if (typeof saved.beta === 'number') state.beta = clamp(saved.beta, -45, 45);
     }
@@ -1084,7 +1167,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
     clearTimeout(persistT); persistT = setTimeout(persistNow, 250);
   }
   function persistNow() {
-    try { localStorage.setItem('graftview.v1', JSON.stringify({ cfg: $('cfg').value, dominance: state.dominance, ramus: state.ramus, alpha: state.alpha, beta: state.beta })); } catch (e) { }
+    try { localStorage.setItem('graftview.v1', JSON.stringify({ cfg: $('cfg').value, ramus: state.ramus, lesions: state.lesions, alpha: state.alpha, beta: state.beta })); } catch (e) { }
   }
 
   let model = null;
@@ -1134,13 +1217,33 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
   }
   function applyLesions(vessel, lesions) {
     const radii = vessel.radii.slice();
-    lesions.filter(l => l.vessel === vessel.id).forEach(l => {
+    lesions.filter(l => l.vessel === vessel.id && l.severity > 0).forEach(l => {
+      const halfLen = 0.02 + 0.03 * l.severity;        // ~5-11 mm long
       for (let i = 0; i < radii.length; i++) {
-        const u = i / (radii.length - 1), d = (u - l.u) / 0.028;
-        radii[i] *= 1 - l.severity * Math.exp(-d * d);
+        const u = i / (radii.length - 1), d = (u - l.u) / halfLen;
+        radii[i] *= 1 - l.severity * Math.exp(-d * d * 1.2);
       }
     });
     return radii;
+  }
+  // stent: short tubular mesh around the vessel at the lesion site (radiopaque, visible without contrast)
+  function stentGeometry(vessel, l) {
+    const n = vessel.points.length, i0 = Math.max(1, Math.round((l.u - 0.035) * (n - 1))), i1 = Math.min(n - 2, Math.round((l.u + 0.035) * (n - 1)));
+    const pts = vessel.points.slice(i0, i1 + 1); if (pts.length < 2) return null;
+    const r = vessel.radii[Math.round(l.u * (n - 1))] * 1.15 + 0.0015;
+    const geos = [];
+    // struts: 6 longitudinal + 5 rings
+    for (let k = 0; k < 6; k++) {
+      const th = k / 6 * Math.PI * 2; const strut = pts.map((p, j) => { const t = GV.tangentAt(pts, j); const nrm = norm(Math.abs(t[1]) < 0.9 ? cross(t, [0, 1, 0]) : cross(t, [1, 0, 0])); const b = cross(t, nrm); return add(p, add(mul(nrm, r * Math.cos(th)), mul(b, r * Math.sin(th)))); });
+      geos.push(tubeGeometry(strut, strut.map(() => 0.0012), 5));
+    }
+    for (let k = 0; k <= 4; k++) {
+      const j = Math.round(k / 4 * (pts.length - 1)); const p = pts[j], t = GV.tangentAt(pts, j);
+      const nrm = norm(Math.abs(t[1]) < 0.9 ? cross(t, [0, 1, 0]) : cross(t, [1, 0, 0])), b = cross(t, nrm); const ring = [];
+      for (let q = 0; q <= 16; q++) { const th = q / 16 * Math.PI * 2; ring.push(add(p, add(mul(nrm, r * Math.cos(th)), mul(b, r * Math.sin(th))))); }
+      geos.push(tubeGeometry(ring, ring.map(() => 0.0012), 5));
+    }
+    return geos;
   }
 
   // ---------------- angio shader ----------------
@@ -1191,21 +1294,21 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
   const orbit = { theta: 0.55, phi: 1.25, dist: 3.1 };   // theta: around y from +z; phi: polar from +y
   function resetOrbit() { orbit.theta = 0.55; orbit.phi = 1.25; orbit.dist = 3.1; }
 
-  const groupsA = { vessels: [], shadow: [], hardware: [], catheter: null };
-  const groups3 = { vessels: [], heart: [], hardware: [], chest: [], detector: [] };
+  const groupsA = { vessels: [], shadow: [], hardware: [], stents: [], catheter: null };
+  const groups3 = { vessels: [], heart: [], hardware: [], chest: [], detector: [], stents: [] };
   const meshIndexA = {};      // vessel id -> angio mesh
   const labelAnchors = [];    // {id, name, color, point, kind}
 
   function clearGroup(scene, arr) { arr.forEach(m => { scene.remove(m); if (m.geometry && !m.userData.shared) m.geometry.dispose(); if (m.material && m.material.dispose) m.material.dispose(); }); arr.length = 0; }
 
   function rebuildModel() {
-    model = GV.buildModel({ grafts: state.grafts.map(g => Object.assign({}, g)), dominance: state.dominance, ramus: state.ramus });
+    model = GV.buildModel({ grafts: state.grafts.map(g => Object.assign({}, g)), dominance: state.dominance, ramus: state.ramus, lesions: state.lesions });
     // reset angio scene
-    clearGroup(sceneA, groupsA.vessels); clearGroup(sceneA, groupsA.shadow); clearGroup(sceneA, groupsA.hardware);
-    clearGroup(scene3, groups3.vessels); clearGroup(scene3, groups3.heart); clearGroup(scene3, groups3.hardware); clearGroup(scene3, groups3.chest); clearGroup(scene3, groups3.detector);
+    clearGroup(sceneA, groupsA.vessels); clearGroup(sceneA, groupsA.shadow); clearGroup(sceneA, groupsA.hardware); clearGroup(sceneA, groupsA.stents);
+    clearGroup(scene3, groups3.vessels); clearGroup(scene3, groups3.heart); clearGroup(scene3, groups3.hardware); clearGroup(scene3, groups3.chest); clearGroup(scene3, groups3.detector); clearGroup(scene3, groups3.stents);
     for (const k in meshIndexA) delete meshIndexA[k];
     labelAnchors.length = 0;
-    const lesions = state.lesions ? model.lesions : [];
+    const lesions = model.lesions;
 
     // natives
     model.natives.forEach(v => {
@@ -1246,6 +1349,16 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
     // hardware: sternal wires and LIMA clips
     const metalA = () => new THREE.MeshBasicMaterial({ color: 0x0d0d0d, transparent: true, opacity: 0.9, depthWrite: false, depthTest: false });
     const metal3 = () => new THREE.MeshPhongMaterial({ color: 0xd8dde3, shininess: 90, specular: 0xffffff });
+    // stents (always shown)
+    model.lesions.filter(l => l.stent).forEach(l => {
+      const v = model.byId[l.vessel]; if (!v) return;
+      const geos = stentGeometry(v, l); if (!geos) return;
+      geos.forEach(geo => {
+        const mA = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.75, depthWrite: false, depthTest: false }));
+        const m3 = new THREE.Mesh(geo, metal3());
+        sceneA.add(mA); groupsA.stents.push(mA); scene3.add(m3); groups3.stents.push(m3);
+      });
+    });
     model.wires.forEach((w) => {
       // Figure-of-eight sternal wire. Four passes through the bone at (±hw, ±dy); the wire crosses the
       // midline diagonally in front of the sternum (upper-left -> lower-right) and behind it
@@ -1300,6 +1413,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
     renderGraftList();
     renderLegend();
     buildSoi();
+    renderLesionTable();
     renderSchematic();
     requestRender();
     requestAtlas();
@@ -1342,7 +1456,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
     const fills = {};
     const push = (id, iv) => { (fills[id] = fills[id] || []).push(iv); };
     const inj = state.injection;
-    const lesionOn = (vid) => state.lesions ? model.lesions.find(l => l.vessel === vid) : null;
+    const lesionOn = (vid) => model.lesions.filter(l => l.vessel === vid && l.severity >= 0.7).sort((a, b) => b.u - a.u)[0] || null;
     if (inj === 'all') {
       model.natives.forEach(v => push(v.id, [0, 1, 1, 0]));
       model.grafts.forEach(g => push(g.id, [0, 1, 1, 0]));
@@ -1367,10 +1481,10 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
       const v = model.byId[vid]; if (!v || depth > 2) return;
       const les = lesionOn(vid);
       if (les && les.u < fromU) { push(vid, [les.u, fromU, alpha, 1]); model.natives.filter(c => c.parent === vid && c.originU > les.u && c.originU < fromU).forEach(c => antegrade(c.id, 0, alpha * 0.8, depth + 1)); return; }
-      const start = state.lesions ? 0 : Math.max(0, fromU - 0.35);
+      const start = 0;
       push(vid, [start, fromU, alpha, 1]);
       model.natives.filter(c => c.parent === vid && c.originU > start && c.originU < fromU).forEach(c => antegrade(c.id, 0, alpha * 0.8, depth + 1));
-      if (start === 0 && v.parent && state.lesions) {
+      if (v.parent) {
         // continue into the parent trunk, both ways
         const p = model.byId[v.parent];
         retrograde(p.id, v.originU, alpha * 0.8, depth + 1);
@@ -1861,10 +1975,57 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
   const presetSel = $('presets');
   GV.PRESETS.forEach((p, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = p.name; presetSel.appendChild(o); });
   presetSel.addEventListener('change', (e) => { const p = GV.PRESETS[+e.target.value]; if (p) applyConfigText(p.text); e.target.value = ''; });
-  $('dom').value = state.dominance; $('ramus').checked = state.ramus; $('lesions').checked = state.lesions;
+  $('dom').value = state.dominance; $('ramus').checked = state.ramus;
   $('dom').addEventListener('change', (e) => { state.dominance = e.target.value; persist(); rebuildModel(); });
   $('ramus').addEventListener('change', (e) => { state.ramus = e.target.checked; persist(); rebuildModel(); });
-  $('lesions').addEventListener('change', (e) => { state.lesions = e.target.checked; rebuildModel(); });
+
+  // ---------------- lesion table ----------------
+  const LES_FIELDS = [['sten', '%', 0, 100, 1], ['ffr', 'FFR', 0, 1, 0.01], ['rfr', 'RFR', 0, 1, 0.01], ['ifr', 'iFR', 0, 1, 0.01]];
+  function lesionSig(L) {
+    const n = (x) => (x === '' || x == null || isNaN(+x)) ? null : +x;
+    return (n(L.sten) != null && n(L.sten) >= 70) || (n(L.ffr) != null && n(L.ffr) <= 0.80) || (n(L.ifr) != null && n(L.ifr) <= 0.89) || (n(L.rfr) != null && n(L.rfr) <= 0.89);
+  }
+  function lesionHas(L) { return !!L && (['sten', 'ffr', 'rfr', 'ifr'].some(k => L[k] !== '' && L[k] != null) || L.stent); }
+  function renderLesionTable() {
+    const box = $('lesionTable'); box.innerHTML = '';
+    const head = document.createElement('div'); head.className = 'lhead'; head.innerHTML = '<span>Segment</span><span>Stenosis %</span><span>FFR</span><span>RFR</span><span>iFR</span><span>Stent</span>'; box.appendChild(head);
+    GV.lesionSegments({ ramus: state.ramus }).forEach(sg => {
+      const L = state.lesions[sg.key] || {};
+      const row = document.createElement('div'); row.className = 'lrow' + (lesionHas(L) ? ' has' : '') + (lesionSig(L) ? ' sig' : '');
+      const nm = document.createElement('span'); nm.className = 'ln'; nm.innerHTML = esc(sg.label) + (sg.seg !== 'single' ? '' : '');
+      row.appendChild(nm);
+      LES_FIELDS.forEach(([k, ph, mn, mx, st]) => {
+        const inp = document.createElement('input'); inp.type = 'number'; inp.min = mn; inp.max = mx; inp.step = st; inp.placeholder = ph; inp.id = 'les-' + sg.key.replace(':', '-') + '-' + k;
+        inp.value = L[k] != null ? L[k] : ''; inp.setAttribute('aria-label', sg.label + ' ' + ph);
+        if (k === 'sten' ? (+inp.value >= 70 && inp.value !== '') : (k === 'ffr' ? (inp.value !== '' && +inp.value <= 0.80) : (inp.value !== '' && +inp.value <= 0.89))) inp.classList.add('sigv');
+        inp.addEventListener('change', () => { let v = inp.value.trim(); if (v !== '') { v = Math.max(mn, Math.min(mx, +v)); if (k === 'sten') v = Math.round(v); else v = Math.round(v * 100) / 100; } setLesion(sg.key, k, v); });
+        row.appendChild(inp);
+      });
+      const st = document.createElement('label'); st.className = 'st'; const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!L.stent; cb.id = 'les-' + sg.key.replace(':', '-') + '-stent';
+      cb.addEventListener('change', () => setLesion(sg.key, 'stent', cb.checked)); st.appendChild(cb); st.append('stent'); row.appendChild(st);
+      box.appendChild(row);
+    });
+    const les = Object.keys(state.lesions).filter(k => lesionHas(state.lesions[k]));
+    $('lesSummary').textContent = les.length ? les.length + ' segment' + (les.length > 1 ? 's' : '') + ' with findings · red = haemodynamically significant (≥70%, FFR ≤0.80, iFR/RFR ≤0.89)' : 'No lesions entered: the native tree is drawn without stenoses.';
+  }
+  function setLesion(key, field, value) {
+    const L = Object.assign({}, state.lesions[key] || {});
+    if (value === '' || value === false) delete L[field]; else L[field] = value;
+    if (lesionHas(L)) state.lesions[key] = L; else delete state.lesions[key];
+    persist(); rebuildModel();
+  }
+  function esc(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+  $('lesClear').addEventListener('click', () => { state.lesions = {}; persist(); rebuildModel(); });
+  function lesionText(l) {   // "mid LAD 80%, FFR 0.72, stent"
+    const parts = [];
+    if (l.severity > 0) parts.push(Math.round(l.severity * 100) + '%');
+    if (l.ffr != null) parts.push('FFR ' + l.ffr.toFixed(2));
+    if (l.rfr != null) parts.push('RFR ' + l.rfr.toFixed(2));
+    if (l.ifr != null) parts.push('iFR ' + l.ifr.toFixed(2));
+    if (l.stent) parts.push('stent');
+    const segName = l.seg === 'p' ? 'proximal ' : l.seg === 'm' ? 'mid ' : l.seg === 'd' ? 'distal ' : '';
+    return segName + GV.dn(l.vessel) + (parts.length ? ' ' + parts.join(', ') : '');
+  }
 
   // ---------------- graft editor ----------------
   const TARGET_ORDER = GV.TARGET_ORDER;
@@ -1999,7 +2160,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
     const used = new Set(state.grafts.map(g => g.conduit));
     Object.keys(GV.CONDUITS).forEach(k => { if (!used.has(k)) return; const c = GV.CONDUITS[k]; const s = document.createElement('span'); s.innerHTML = `<i style="background:${c.color}"></i>${c.name} — ${c.long}`; box.appendChild(s); });
     const s = document.createElement('span'); s.innerHTML = '<i style="background:#dc6a62"></i>native coronaries'; box.appendChild(s);
-    if (state.lesions && model.lesions.length) { const l = document.createElement('span'); l.textContent = 'stenoses: ' + model.lesions.map(x => GV.dn(x.vessel)).join(', '); box.appendChild(l); }
+    if (model.lesions.length) { const l = document.createElement('span'); l.textContent = 'lesions: ' + model.lesions.map(lesionText).join('; '); box.appendChild(l); }
   }
   $('copyEmail').addEventListener('click', () => {
     const txt = $('email').textContent, btn = $('copyEmail');
@@ -2030,7 +2191,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
     if (!model) return '';
     const d = $('schemDate').value;
     const dateTxt = d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '';
-    return GVS.render({ natives: model.natives, grafts: model.grafts, dominance: state.dominance, meshes: schemMeshes(), title: $('schemTitle').value.trim() || 'Grafting strategy',
+    return GVS.render({ natives: model.natives, grafts: model.grafts, lesions: model.lesions, lesionText, dominance: state.dominance, meshes: schemMeshes(), title: $('schemTitle').value.trim() || 'Grafting strategy',
       meta: { date: dateTxt, surgeon: $('schemSurgeon').value.trim() }, footer: 'Sam Heuts, MUMC+' }, { dn: GV.dn, view: schemView });
   }
   let schemPending = false;
