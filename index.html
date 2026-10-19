@@ -74,7 +74,9 @@ button.chip.active .ang { color: var(--accent); }
 
 .views { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
 .schem-panel { grid-column: 1 / -1; }
-.schem-wrap { background: #ffffff; padding: 8px; display: flex; justify-content: center; }
+.schem-wrap { background: #ffffff; padding: 8px; display: flex; justify-content: center; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.schem-wrap:active { cursor: grabbing; }
+.toolbar .stat { font-family: var(--font-mono); font-size: 12px; color: var(--accent); font-variant-numeric: tabular-nums; }
 .schem-wrap svg { width: 100%; max-width: 1120px; height: auto; display: block; }
 .toolbar input.mini { font: 500 12.5px var(--font-ui); color: var(--fg); background: var(--panel2); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; width: 9em; min-width: 0; }
 .toolbar input.mini[type="date"] { width: 10.5em; }
@@ -250,9 +252,13 @@ footer a { color: var(--fg); }
     </section>
 
     <section class="panel schem-panel" aria-label="Schematic">
-      <div class="panel-head"><h2>Schematic</h2><span class="sub">line-art projection of the model (LAO 15 CRA 20) with the grafts · for the OR report</span></div>
+      <div class="panel-head"><h2>Schematic</h2><span class="sub">drag = turn · line-art projection of the model for the OR report</span></div>
       <div class="schem-wrap" id="schemWrap"></div>
       <div class="toolbar">
+        <span class="stat" id="schemAngle">LAO 15 CRA 20</span>
+        <button class="small" id="schemMatch" title="Turn the schematic to the current C-arm angle">Match C-arm</button>
+        <button class="small" id="schemDefault" title="Back to the default LAO 15 CRA 20 view">Default view</button>
+        <span class="grow"></span>
         <label class="inline" for="schemTitle">Title</label><input id="schemTitle" type="text" class="mini" value="CABG" aria-label="Diagram title">
         <label class="inline" for="schemSurgeon">Surgeon</label><input id="schemSurgeon" type="text" class="mini" value="" placeholder="initials" aria-label="Surgeon">
         <label class="inline" for="schemDate">Date</label><input id="schemDate" type="date" class="mini" aria-label="Date">
@@ -776,7 +782,7 @@ footer a { color: var(--fg); }
   'use strict';
 
   const W = 1120, H = 760;
-  const VIEW = { key: 'lao', alpha: 15, beta: 20 };   // fixed view; silhouettes for it are precomputed in anatomy.json (schem[key])
+  const VIEW = { alpha: 15, beta: 20 };   // default view (LAO 15 CRA 20); the panel can be turned to any C-arm angle
   const CONDUIT_COLOR = { LIMA: '#d97706', RIMA: '#b4891a', RA: '#be185d', SVG: '#1d4ed8', GEA: '#4d7c0f' };
 
   function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
@@ -826,6 +832,47 @@ footer a { color: var(--fg); }
     }
     return P;
   }
+  // Outline of a projected triangle mesh: rasterise into a grid, dilate/erode to close gaps, trace the boundary
+  // (marching squares, outer loop only), then smooth. pos = Float32Array xyz, idx = Uint32Array triangles.
+  function meshOutline(pos, idx, proj, cell) {
+    const n = pos.length / 3; const P = new Float32Array(n * 2);
+    let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+    for (let i = 0; i < n; i++) { const q = proj([pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]]); P[2 * i] = q[0]; P[2 * i + 1] = q[1]; if (q[0] < minx) minx = q[0]; if (q[0] > maxx) maxx = q[0]; if (q[1] < miny) miny = q[1]; if (q[1] > maxy) maxy = q[1]; }
+    const pad = 3 * cell; minx -= pad; miny -= pad; maxx += pad; maxy += pad;
+    const gw = Math.ceil((maxx - minx) / cell) + 1, gh = Math.ceil((maxy - miny) / cell) + 1;
+    const grid = new Uint8Array(gw * gh);
+    // rasterise triangles (scanline over bounding box, barycentric test)
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = idx[t], b = idx[t + 1], c = idx[t + 2];
+      const ax = P[2 * a], ay = P[2 * a + 1], bx = P[2 * b], by = P[2 * b + 1], cx = P[2 * c], cy = P[2 * c + 1];
+      const x0 = Math.max(0, Math.floor((Math.min(ax, bx, cx) - minx) / cell)), x1 = Math.min(gw - 1, Math.ceil((Math.max(ax, bx, cx) - minx) / cell));
+      const y0 = Math.max(0, Math.floor((Math.min(ay, by, cy) - miny) / cell)), y1 = Math.min(gh - 1, Math.ceil((Math.max(ay, by, cy) - miny) / cell));
+      const det = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay); if (Math.abs(det) < 1e-9) continue;
+      for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) {
+        const px = minx + gx * cell, py = miny + gy * cell;
+        const l1 = ((bx - px) * (cy - py) - (cx - px) * (by - py)) / det, l2 = ((cx - px) * (ay - py) - (ax - px) * (cy - py)) / det, l3 = 1 - l1 - l2;
+        if (l1 >= -0.02 && l2 >= -0.02 && l3 >= -0.02) grid[gy * gw + gx] = 1;
+      }
+    }
+    // close small gaps: dilate then erode (1 cell)
+    const morph = (src, val) => { const out = new Uint8Array(src.length); for (let y = 1; y < gh - 1; y++) for (let x = 1; x < gw - 1; x++) { let hit = false; for (let dy = -1; dy <= 1 && !hit; dy++) for (let dx = -1; dx <= 1; dx++) if (src[(y + dy) * gw + x + dx] === val) { hit = true; break; } out[y * gw + x] = hit ? val : 1 - val; } return out; };
+    const closed = morph(morph(grid, 1), 0);
+    // radial outline from the centroid of the filled cells: for each direction, the outermost filled cell
+    let sx = 0, sy = 0, cnt = 0;
+    for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) if (closed[y * gw + x]) { sx += x; sy += y; cnt++; }
+    if (!cnt) return [];
+    sx /= cnt; sy /= cnt;
+    const rmax = Math.hypot(gw, gh);
+    const NA = 144; let poly = [];
+    for (let k = 0; k < NA; k++) {
+      const th = k / NA * 2 * Math.PI, dx = Math.cos(th), dy = Math.sin(th);
+      let found = null;
+      for (let r = rmax; r >= 0; r -= 0.5) { const gx = Math.round(sx + dx * r), gy = Math.round(sy + dy * r); if (gx >= 0 && gy >= 0 && gx < gw && gy < gh && closed[gy * gw + gx]) { found = [gx, gy]; break; } }
+      poly.push(found ? [minx + found[0] * cell, miny + found[1] * cell] : [minx + sx * cell, miny + sy * cell]);
+    }
+    for (let k = 0; k < 2; k++) poly = poly.map((p, i) => { const a = poly[(i - 1 + poly.length) % poly.length], b = poly[(i + 1) % poly.length]; return [0.25 * a[0] + 0.5 * p[0] + 0.25 * b[0], 0.25 * a[1] + 0.5 * p[1] + 0.25 * b[1]]; });
+    return poly;
+  }
   function closedPath(poly) { return 'M ' + poly.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L ') + ' Z'; }
   function tube(pts2, radiusPx, fill, stroke, parts) {   // outlined tube from a projected centreline
     const d = bez(pts2);
@@ -874,16 +921,17 @@ footer a { color: var(--fg); }
     push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="Helvetica, Arial, sans-serif">`);
     push(`<rect width="${W}" height="${H}" fill="#ffffff"/>`);
 
-    // ---- silhouettes (precomputed alpha-shape outlines in this view, in view-plane model units) ----
-    const sil = model.silhouettes || {};
-    const toPx = (poly) => poly.map(([x, y]) => [OX + (x - cx2[0]) * SCALE, OY - (y - cx2[1]) * SCALE]);
-    const cx2 = [CENTRE[0] * cam.right[0] + CENTRE[1] * cam.right[1] + CENTRE[2] * cam.right[2], CENTRE[0] * cam.up[0] + CENTRE[1] * cam.up[1] + CENTRE[2] * cam.up[2]];
+    // ---- silhouettes: outlines of the projected meshes in this view (heart, ascending aorta stump, PA stump) ----
     const heartDepth = proj([0, 0, 0])[2];
-    if (sil.pa) push(`<path d="${closedPath(toPx(sil.pa))}" fill="#edf1f6" stroke="#8b96a3" stroke-width="1.8" stroke-linejoin="round"/>`);
-    if (sil.aorta) push(`<path d="${closedPath(toPx(sil.aorta))}" fill="#f3e9e3" stroke="#8b7a72" stroke-width="2" stroke-linejoin="round"/>`);
-    if (sil.heart) push(`<path d="${closedPath(toPx(sil.heart))}" fill="#fbf7f4" stroke="#a8998f" stroke-width="2.2" stroke-linejoin="round"/>`);
-    if (sil.aorta) { const c = toPx(sil.aorta); const mx = c.reduce((a, p) => a + p[0], 0) / c.length, my = c.reduce((a, p) => a + p[1], 0) / c.length; push(`<text x="${mx.toFixed(1)}" y="${(my - 14).toFixed(1)}" text-anchor="middle" font-size="18" fill="#6b5f58" font-weight="700">Ao</text>`); }
-    if (sil.pa) { const c = toPx(sil.pa); const mx = c.reduce((a, p) => a + p[0], 0) / c.length, my = c.reduce((a, p) => a + p[1], 0) / c.length; push(`<text x="${(mx + 10).toFixed(1)}" y="${(my - 10).toFixed(1)}" text-anchor="middle" font-size="15" fill="#6b7580" font-weight="700">PA</text>`); }
+    const M = model.meshes || {};
+    const outline = (m, cell) => (m ? meshOutline(m.pos, m.idx, proj, cell) : []);
+    const paPoly = outline(M.pa, 7), aoPoly = outline(M.aorta, 7), heartPoly = outline(M.heart, 6);
+    if (paPoly.length) push(`<path d="${closedPath(paPoly)}" fill="#edf1f6" stroke="#8b96a3" stroke-width="1.8" stroke-linejoin="round"/>`);
+    if (aoPoly.length) push(`<path d="${closedPath(aoPoly)}" fill="#f3e9e3" stroke="#8b7a72" stroke-width="2" stroke-linejoin="round"/>`);
+    if (heartPoly.length) push(`<path d="${closedPath(heartPoly)}" fill="#fbf7f4" stroke="#a8998f" stroke-width="2.2" stroke-linejoin="round"/>`);
+    const centroid = (c) => [c.reduce((a, p) => a + p[0], 0) / c.length, c.reduce((a, p) => a + p[1], 0) / c.length];
+    if (aoPoly.length) { const [mx, my] = centroid(aoPoly); push(`<text x="${mx.toFixed(1)}" y="${(my - 10).toFixed(1)}" text-anchor="middle" font-size="18" fill="#6b5f58" font-weight="700">Ao</text>`); }
+    if (paPoly.length) { const [mx, my] = centroid(paPoly); push(`<text x="${(mx + 8).toFixed(1)}" y="${(my - 8).toFixed(1)}" text-anchor="middle" font-size="15" fill="#6b7580" font-weight="700">PA</text>`); }
 
     // ---- native vessels, posterior ones lighter ----
     const projected = {};
@@ -987,7 +1035,15 @@ footer a { color: var(--fg); }
     return parts.join('\n');
   }
 
-  const api = { render, W, H, VIEW, CONDUIT_COLOR, camera };
+  // sub-meshes for the stumps: ascending aorta below the arch, PA trunk region (filtered once by the caller)
+  function filterMesh(pos, idx, keep) {   // keep(x,y,z) -> bool; returns {pos, idx} with triangles whose vertices all pass
+    const n = pos.length / 3; const ok = new Uint8Array(n);
+    for (let i = 0; i < n; i++) ok[i] = keep(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]) ? 1 : 0;
+    const out = [];
+    for (let t = 0; t < idx.length; t += 3) if (ok[idx[t]] && ok[idx[t + 1]] && ok[idx[t + 2]]) out.push(idx[t], idx[t + 1], idx[t + 2]);
+    return { pos, idx: Uint32Array.from(out) };
+  }
+  const api = { render, W, H, VIEW, CONDUIT_COLOR, camera, filterMesh, meshOutline };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.GVS = api;
 })(typeof window !== 'undefined' ? window : this);
 
@@ -1954,17 +2010,42 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
 
   // ---------------- schematic ----------------
   const schemWrap = $('schemWrap');
+  const schemView = { alpha: GVS.VIEW.alpha, beta: GVS.VIEW.beta };
+  let SCHEM_MESHES = null;
+  function schemMeshes() {
+    if (SCHEM_MESHES) return SCHEM_MESHES;
+    const g = (id) => { const geo = MESH_GEOMS[id]; return geo ? { pos: geo.getAttribute('position').array, idx: geo.getIndex().array } : null; };
+    const heart = g('heart'), ao = g('aortaAsc'), pa = g('pa');
+    SCHEM_MESHES = {
+      heart,
+      aorta: ao ? GVS.filterMesh(ao.pos, ao.idx, (x, y, z) => y < 0.62) : null,
+      pa: pa ? GVS.filterMesh(pa.pos, pa.idx, (x, y, z) => x > -0.2 && x < 0.45 && y < 0.86 && z > -0.2) : null
+    };
+    return SCHEM_MESHES;
+  }
+  function schemAngleText() { return GV.viewLabel(schemView.alpha, schemView.beta); }
   const IN_ARTIFACT_VIEWER = /claude\.ai|anthropic/.test(document.referrer) || window.self !== window.top;
   try { $('schemDate').valueAsDate = new Date(); } catch (e) { }
   function schematicSVG() {
     if (!model) return '';
     const d = $('schemDate').value;
     const dateTxt = d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '';
-    const sv = GV.data.schem[GVS.VIEW.key];
-    return GVS.render({ natives: model.natives, grafts: model.grafts, dominance: state.dominance, silhouettes: sv, title: $('schemTitle').value.trim() || 'Grafting strategy',
-      meta: { date: dateTxt, surgeon: $('schemSurgeon').value.trim() }, footer: 'Sam Heuts, MUMC+' }, { dn: GV.dn, view: { alpha: sv.alpha, beta: sv.beta } });
+    return GVS.render({ natives: model.natives, grafts: model.grafts, dominance: state.dominance, meshes: schemMeshes(), title: $('schemTitle').value.trim() || 'Grafting strategy',
+      meta: { date: dateTxt, surgeon: $('schemSurgeon').value.trim() }, footer: 'Sam Heuts, MUMC+' }, { dn: GV.dn, view: schemView });
   }
-  function renderSchematic() { schemWrap.innerHTML = schematicSVG(); }
+  let schemPending = false;
+  function renderSchematic() {
+    if (schemPending) return; schemPending = true;
+    requestAnimationFrame(() => { schemPending = false; schemWrap.innerHTML = schematicSVG(); $('schemAngle').textContent = schemAngleText(); });
+  }
+  function setSchemView(a, b) { schemView.alpha = Math.round(clamp(a, -90, 90)); schemView.beta = Math.round(clamp(b, -45, 45)); renderSchematic(); }
+  let sDrag = null;
+  schemWrap.addEventListener('pointerdown', (e) => { sDrag = { x: e.clientX, y: e.clientY, a: schemView.alpha, b: schemView.beta }; schemWrap.setPointerCapture(e.pointerId); });
+  schemWrap.addEventListener('pointermove', (e) => { if (!sDrag) return; setSchemView(sDrag.a + (e.clientX - sDrag.x) * TURN_X, sDrag.b - (e.clientY - sDrag.y) * TURN_Y); });
+  schemWrap.addEventListener('pointerup', () => sDrag = null);
+  schemWrap.addEventListener('pointercancel', () => sDrag = null);
+  $('schemMatch').addEventListener('click', () => setSchemView(state.alpha, state.beta));
+  $('schemDefault').addEventListener('click', () => setSchemView(GVS.VIEW.alpha, GVS.VIEW.beta));
   ['schemTitle', 'schemSurgeon', 'schemDate'].forEach(id => $(id).addEventListener('input', renderSchematic));
   function fileStem() { return 'graftviewer-' + ($('cfg').value || 'native').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 60); }
   function svgToPngBlob(svgText, scale) {
