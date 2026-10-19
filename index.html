@@ -2018,7 +2018,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
   $('ramus').addEventListener('change', (e) => { state.ramus = e.target.checked; persist(); rebuildModel(); });
 
   // ---------------- lesion table ----------------
-  const LES_FIELDS = [['sten', '%', 0, 100, 1], ['ffr', 'FFR', 0, 1, 0.01], ['rfr', 'RFR', 0, 1, 0.01], ['ifr', 'iFR', 0, 1, 0.01]];
+  const LES_FIELDS = [['sten', 'vis %', 0, 100, 1], ['ffr', 'FFR', 0, 1, 0.01], ['rfr', 'RFR', 0, 1, 0.01], ['ifr', 'iFR', 0, 1, 0.01]];
   function lesionSig(L, vessel) { return GV.lesionSignificance(L, vessel).significant; }
   function lesionHas(L) { return !!L && (['sten', 'ffr', 'rfr', 'ifr'].some(k => L[k] !== '' && L[k] != null) || L.stent); }
   function renderLesionTable() {
@@ -2031,7 +2031,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
       const note = GV.territoryNote(T.id, state.dominance);
       ttl.innerHTML = '<span>' + esc(T.name) + '</span>' + (n ? '<span class="cnt">' + n + ' finding' + (n > 1 ? 's' : '') + '</span>' : '') + (note ? '<small>' + esc(note) + '</small>' : '');
       col.appendChild(ttl);
-      const head = document.createElement('div'); head.className = 'lhead'; head.innerHTML = '<span>Segment</span><span>Sten %</span><span>FFR</span><span>RFR</span><span>iFR</span><span>Stent</span>'; col.appendChild(head);
+      const head = document.createElement('div'); head.className = 'lhead'; head.innerHTML = '<span>Segment</span><span title="Visual severity, % diameter stenosis">Visual %</span><span>FFR</span><span>RFR</span><span>iFR</span><span>Stent</span>'; col.appendChild(head);
       segs.filter(sg => sg.territory === T.id).forEach(sg => col.appendChild(lesionRow(sg)));
       box.appendChild(col);
     });
@@ -2046,7 +2046,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
       row.appendChild(nm);
       LES_FIELDS.forEach(([k, ph, mn, mx, st]) => {
         const inp = document.createElement('input'); inp.type = 'number'; inp.min = mn; inp.max = mx; inp.step = st; inp.placeholder = ph; inp.id = 'les-' + sg.key.replace(':', '-') + '-' + k;
-        inp.value = L[k] != null ? L[k] : ''; inp.setAttribute('aria-label', sg.label + ' ' + ph);
+        inp.value = L[k] != null ? L[k] : ''; inp.setAttribute('aria-label', sg.label + ' ' + (k === 'sten' ? 'visual severity %' : ph));
         const verdict = GV.lesionSignificance(L, sg.vessel);
         const deciding = verdict.basis === k || (verdict.basis === 'ifr' && k === 'rfr' && L.rfr != null) || (verdict.basis === 'rfr' && k === 'ifr' && L.ifr != null);
         if (inp.value !== '' && deciding && verdict.significant) inp.classList.add('sigv');
