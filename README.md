@@ -12,8 +12,9 @@ Live page: https://samuelheuts.github.io/GraftViewer/
 
 Open `index.html` in any modern browser (Chrome, Edge, Safari, Firefox). The page is self-contained: the anatomy data and the three.js library are embedded, so it works offline and from a local copy.
 
+- Vessel nomenclature: LAD, D1/D2, AL (anterolateral branch / ramus intermedius), OM1/OM2, PLCx (proximal circumflex), RCA, RDP (posterior descending), RPL (posterolateral). The notation also accepts the common synonyms (PDA, PL, RI, LCx).
 - Drag the angiogram or the 3D model to turn the C-arm; shift-drag pans the table; the mouse wheel changes the field of view.
-- Edit grafts in the Grafts card, or type the notation: `LIMA-LAD, SVG-OM1-PDA` (sequential vein), `RA(T:LIMA)-OM1-PDA` (T-graft off the LIMA), `free RIMA-OM1` (RIMA taken off the aorta); prefix an insertion with `p`, `m` or `d` for the proximal, mid or distal segment.
+- Edit grafts in the Grafts card, or type the notation: `LIMA-LAD, SVG-OM1-RDP` (sequential vein), `RA(T:LIMA)-OM1-RDP` (T-graft off the LIMA), `free RIMA-OM1` (RIMA taken off the aorta); prefix an insertion with `p`, `m` or `d` for the proximal, mid or distal segment.
 
 ## Anatomy and data sources
 
