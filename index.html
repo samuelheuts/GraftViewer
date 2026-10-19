@@ -205,7 +205,7 @@ footer a { color: var(--fg); }
 
   <section class="setup lesions-row">
     <div class="card" aria-label="Coronary lesions">
-      <h3>Coronary lesions <small>— per segment: visual stenosis, FFR, RFR, iFR, previous stent (leave blank = none)</small></h3>
+      <h3>Coronary lesions <small>— per segment: visual stenosis, FFR, RFR, iFR, previous stent (blank = none); significance per ESC/EACTS: ≥70%, left main ≥50%, FFR ≤0.80, iFR/RFR ≤0.89</small></h3>
       <div class="lesion-table" id="lesionTable"></div>
       <div class="g-actions"><button class="small" id="lesClear">Clear lesions</button><span class="hint-inline" id="lesSummary"></span></div>
     </div>
@@ -610,6 +610,8 @@ footer a { color: var(--fg); }
     return dom === 'left' ? 'RDP and RPL from the circumflex (left dominant)' : dom === 'co' ? 'RDP from the RCA, posterolateral from the circumflex (co-dominant)' : '';
   }
   const num = (x) => (x === '' || x == null || isNaN(+x)) ? null : +x;
+  // angiographic significance cut-off (ESC/EACTS): left main >= 50 %, other epicardial vessels >= 70 %
+  const STEN_CUTOFF = (vid) => vid === 'LM' ? 0.50 : 0.70;
 
   // ---------- full model ----------
   function buildModel(opts) {
@@ -655,8 +657,9 @@ footer a { color: var(--fg); }
       const u = SEGMENT_U[seg || 'single'];
       const sten = Math.max(0, Math.min(100, +L.sten || 0)) / 100;
       const hasPhys = [L.ffr, L.rfr, L.ifr].some(x => x !== '' && x != null && !isNaN(+x));
-      if (sten > 0 || hasPhys || L.stent) lesions.push({ vessel: vid, seg: seg || 'single', key, u, severity: sten, ffr: num(L.ffr), rfr: num(L.rfr), ifr: num(L.ifr), stent: !!L.stent,
-        significant: sten >= 0.70 || (num(L.ffr) != null && num(L.ffr) <= 0.80) || (num(L.ifr) != null && num(L.ifr) <= 0.89) || (num(L.rfr) != null && num(L.rfr) <= 0.89) });
+      const stenCut = STEN_CUTOFF(vid);
+      if (sten > 0 || hasPhys || L.stent) lesions.push({ vessel: vid, seg: seg || 'single', key, u, severity: sten, ffr: num(L.ffr), rfr: num(L.rfr), ifr: num(L.ifr), stent: !!L.stent, stenCut,
+        significant: sten >= stenCut || (num(L.ffr) != null && num(L.ffr) <= 0.80) || (num(L.ifr) != null && num(L.ifr) <= 0.89) || (num(L.rfr) != null && num(L.rfr) <= 0.89) });
     });
 
     const wires = grafts.length ? LM.wires.map(w => Object.assign({}, w)) : [];
@@ -822,7 +825,7 @@ footer a { color: var(--fg); }
     ]
   };
 
-  const api = { SITE_U, SITE_NAME, DISPLAY, LONG, dn, TARGET_ORDER, SEGMENT_U, TERRITORIES, lesionSegments, territoryNote, init, cyl, surf, outward, smoothCurve, tangentAt, pointAtU, nearestU, buildModel, detectorDir, viewLabel, parseConfig, graftLabel, configToText,
+  const api = { SITE_U, SITE_NAME, DISPLAY, LONG, dn, TARGET_ORDER, SEGMENT_U, TERRITORIES, STEN_CUTOFF, lesionSegments, territoryNote, init, cyl, surf, outward, smoothCurve, tangentAt, pointAtU, nearestU, buildModel, detectorDir, viewLabel, parseConfig, graftLabel, configToText,
     PRESETS, STANDARD_VIEWS, TARGETS, CONDUITS, get data() { return D; }, get phi() { return PHI; }, vec: { add, sub, mul, dot, cross, len, norm, lerp, clamp } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.GV = api;
 })(typeof window !== 'undefined' ? window : this);
@@ -1124,7 +1127,7 @@ footer a { color: var(--fg); }
       <circle cx="${LX + 6}" cy="${ky + 44}" r="5.5" fill="#fff" stroke="#444" stroke-width="2.5"/><text x="${LX + 18}" y="${ky + 48}">proximal anastomosis on the aorta</text>
       <rect x="${LX + 1}" y="${ky + 61}" width="10" height="10" transform="rotate(45 ${LX + 6} ${ky + 66})" fill="#fff" stroke="#444" stroke-width="2.5"/><text x="${LX + 18}" y="${ky + 70}">composite T/Y take-off</text>
       <line x1="${LX}" y1="${ky + 88}" x2="${LX + 12}" y2="${ky + 88}" stroke="#8a8a8a" stroke-width="2.5" stroke-dasharray="5 4"/><text x="${LX + 18}" y="${ky + 92}">posterior vessel (behind the heart)</text>
-      <path d="M ${LX + 1} ${ky + 103} L ${LX + 6} ${ky + 109} L ${LX + 11} ${ky + 103} Z" fill="#dc2626"/><text x="${LX + 18}" y="${ky + 112}">stenosis · red = significant (≥70%, FFR ≤0.80, iFR/RFR ≤0.89)</text>
+      <path d="M ${LX + 1} ${ky + 103} L ${LX + 6} ${ky + 109} L ${LX + 11} ${ky + 103} Z" fill="#dc2626"/><text x="${LX + 18}" y="${ky + 112}">stenosis · red = significant (≥70%, LM ≥50%, FFR ≤0.80, iFR/RFR ≤0.89)</text>
     </g>`);
     push(`<text x="${LX}" y="${H - 20}" font-size="10.5" fill="#9a8f8a">Projection of the BodyParts3D-derived model, ${view.alpha >= 0 ? 'LAO' : 'RAO'} ${Math.abs(view.alpha)}° ${view.beta >= 0 ? 'CRA' : 'CAU'} ${Math.abs(view.beta)}°. Not to scale.</text>`);
     push(`<text x="${LX}" y="${H - 6}" font-size="10.5" fill="#9a8f8a">GraftViewer · ${esc(model.footer || 'educational simulation')}</text>`);
@@ -1996,9 +1999,10 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
 
   // ---------------- lesion table ----------------
   const LES_FIELDS = [['sten', '%', 0, 100, 1], ['ffr', 'FFR', 0, 1, 0.01], ['rfr', 'RFR', 0, 1, 0.01], ['ifr', 'iFR', 0, 1, 0.01]];
-  function lesionSig(L) {
+  function lesionSig(L, vessel) {
     const n = (x) => (x === '' || x == null || isNaN(+x)) ? null : +x;
-    return (n(L.sten) != null && n(L.sten) >= 70) || (n(L.ffr) != null && n(L.ffr) <= 0.80) || (n(L.ifr) != null && n(L.ifr) <= 0.89) || (n(L.rfr) != null && n(L.rfr) <= 0.89);
+    const cut = GV.STEN_CUTOFF(vessel) * 100;
+    return (n(L.sten) != null && n(L.sten) >= cut) || (n(L.ffr) != null && n(L.ffr) <= 0.80) || (n(L.ifr) != null && n(L.ifr) <= 0.89) || (n(L.rfr) != null && n(L.rfr) <= 0.89);
   }
   function lesionHas(L) { return !!L && (['sten', 'ffr', 'rfr', 'ifr'].some(k => L[k] !== '' && L[k] != null) || L.stent); }
   function renderLesionTable() {
@@ -2016,18 +2020,19 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
       box.appendChild(col);
     });
     const les = Object.keys(state.lesions).filter(k => lesionHas(state.lesions[k]));
-    $('lesSummary').textContent = les.length ? les.length + ' segment' + (les.length > 1 ? 's' : '') + ' with findings · red = haemodynamically significant (≥70%, FFR ≤0.80, iFR/RFR ≤0.89)' : 'No lesions entered: the native tree is drawn without stenoses.';
+    $('lesSummary').textContent = les.length ? les.length + ' segment' + (les.length > 1 ? 's' : '') + ' with findings · red = significant (≥70%, LM ≥50%, FFR ≤0.80, iFR/RFR ≤0.89; ESC/EACTS)' : 'No lesions entered: the native tree is drawn without stenoses. Significance: ≥70% (LM ≥50%), FFR ≤0.80, iFR/RFR ≤0.89 (ESC/EACTS).';
   }
   function lesionRow(sg) {
     {
       const L = state.lesions[sg.key] || {};
-      const row = document.createElement('div'); row.className = 'lrow' + (lesionHas(L) ? ' has' : '') + (lesionSig(L) ? ' sig' : '');
+      const row = document.createElement('div'); row.className = 'lrow' + (lesionHas(L) ? ' has' : '') + (lesionSig(L, sg.vessel) ? ' sig' : '');
       const nm = document.createElement('span'); nm.className = 'ln'; nm.textContent = sg.seg === 'single' ? sg.label : (sg.seg === 'p' ? 'prox ' : sg.seg === 'm' ? 'mid ' : 'dist ') + GV.dn(sg.vessel);
       row.appendChild(nm);
       LES_FIELDS.forEach(([k, ph, mn, mx, st]) => {
         const inp = document.createElement('input'); inp.type = 'number'; inp.min = mn; inp.max = mx; inp.step = st; inp.placeholder = ph; inp.id = 'les-' + sg.key.replace(':', '-') + '-' + k;
         inp.value = L[k] != null ? L[k] : ''; inp.setAttribute('aria-label', sg.label + ' ' + ph);
-        if (k === 'sten' ? (+inp.value >= 70 && inp.value !== '') : (k === 'ffr' ? (inp.value !== '' && +inp.value <= 0.80) : (inp.value !== '' && +inp.value <= 0.89))) inp.classList.add('sigv');
+        if (k === 'sten' ? (inp.value !== '' && +inp.value >= GV.STEN_CUTOFF(sg.vessel) * 100) : (k === 'ffr' ? (inp.value !== '' && +inp.value <= 0.80) : (inp.value !== '' && +inp.value <= 0.89))) inp.classList.add('sigv');
+        if (k === 'sten' && sg.vessel === 'LM') inp.title = 'Left main: significant at ≥50% (ESC/EACTS)';
         inp.addEventListener('change', () => { let v = inp.value.trim(); if (v !== '') { v = Math.max(mn, Math.min(mx, +v)); if (k === 'sten') v = Math.round(v); else v = Math.round(v * 100) / 100; } setLesion(sg.key, k, v); });
         row.appendChild(inp);
       });
