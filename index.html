@@ -237,7 +237,7 @@ footer a { color: var(--fg); }
         <span class="grow"></span>
         <button class="small toggle" id="tLabels3" aria-pressed="true">Labels</button>
         <button class="small toggle" id="tSee" aria-pressed="true">See-through heart</button>
-        <button class="small toggle" id="tChest" aria-pressed="true">Chest wall</button>
+        <button class="small toggle" id="tChest" aria-pressed="false">Chest wall</button>
         <button class="small toggle" id="tDetector" aria-pressed="true">Detector</button>
         <button class="small" id="reset3d">Reset</button>
       </div>
@@ -764,7 +764,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
     alpha: 40, beta: 35, injection: 'all', fovCm: 25, pan: [0, 0],
     grafts: [], dominance: 'right', ramus: false, lesions: true,
     labelsA: true, colour: false, ghost: false, hardware: false, fore: false, soi: '',
-    labels3: true, see: true, chest: true, detector: true, linked: true
+    labels3: true, see: true, chest: false, detector: true, linked: true
   };
   try {
     const saved = JSON.parse(localStorage.getItem('graftview.v1') || 'null');
