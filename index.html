@@ -450,13 +450,22 @@ footer a { color: var(--fg); }
     } else if (infl && typeof infl === 'object') {
       const parent = graftsById[infl.graft];
       if (parent && parent.points) {
-        const pu = parent.kind0 === 'ima' ? Math.min(0.55, Math.max(0.3, parent.inflowU + 0.05)) : 0.3;
+        // take-off on the parent's free segment (after it has left the chest wall / aorta, before its first
+        // anastomosis), at the level closest to the first target; the limb leaves at a right angle toward the target
+        // T/Y take-off: on the parent's free segment, at the level of the heart's base (~pulmonary trunk), so the
+        // limb runs diagonally down over the anterior LV to the lateral wall; for an aortic parent (vein/RA) a
+        // little further along the graft body.
+        const firstMarkU = parent.marks && parent.marks.length ? parent.marks[0].u : 0.85;
+        const u0 = parent.kind0 === 'ima' ? 0.15 : Math.min(0.6, parent.inflowU + 0.04), u1 = Math.max(u0 + 0.05, firstMarkU - 0.15);
+        const wantY = parent.kind0 === 'ima' ? 0.26 : firstAnast[1] + 0.25;   // IMA: at the level of the heart's base
+        let pu = u0, bd = Infinity;
+        for (let u = u0; u <= u1; u += 0.01) { const q = pointAtU(parent.points, u); const d = Math.abs(q[1] - wantY); if (d < bd) { bd = d; pu = u; } }
         const p = pointAtU(parent.points, pu);
         const t = tangentAt(parent.points, Math.round(pu * (parent.points.length - 1)));
-        const side = norm(cross(t, [0, 0, 1]));
-        ctrl.push(p, add(add(p, mul(side, parent.conduit === 'RIMA' ? -0.06 : 0.06)), [0, -0.02, 0.0]));
+        let toT = sub(firstAnast, p); toT = norm(sub(toT, mul(t, dot(toT, t))));   // direction to target, perpendicular to the parent
+        ctrl.push(p, add(p, mul(toT, 0.05)));
         inflowPoint = p;
-        startRegion = parent.conduit === 'RIMA' && parent.inflow === 'insitu' ? 'right' : 'left';
+        startRegion = 'composite';
       } else ctrl.push(LM.limaBed[LM.limaBed.length - 1]);
       kind = 'composite';
     } else {  // ascending aorta
@@ -485,7 +494,12 @@ footer a { color: var(--fg); }
       const n = outward(h, phi);
       const reg = TARGETS[tid].region;
       if (!prevAnast) {
-        if (kind === 'gea') {
+        if (kind === 'composite') {
+          // diagonal run over the anterior/lateral epicardium from the take-off to the target
+          const [h0, p0] = cyl(leavePt), [h1, p1] = cyl(ap);
+          const dphi = angDiff(p0, p1);
+          for (let k = 1; k <= 2; k++) { const t = k / 3; ctrl.push(surf(Math.max(0.03, h0 + (h1 - h0) * t), p0 + dphi * t, 0.06)); }
+        } else if (kind === 'gea') {
           ctrl.push(surf(1.05, PHI.inf + 0.2, 0.06));
         } else if (kind === 'ima' && reg === 'ant') {
           if (startRegion === 'right' && tid !== 'RCA') ctrl.push([ap[0] - 0.18, ap[1] + 0.22, 0.42]);   // RIMA crossing the midline anteriorly
@@ -936,24 +950,29 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
       const hw = Math.min(w.halfWidth, 0.085), cx = w.center[0], cy = w.center[1];
       const zA = w.zAnt + 0.009, zP = w.zPost - 0.007, dy = 0.10;   // ~22 mm half-span: two intercostal spaces
       const L = [-hw, 0], R = [hw, 0];
+      // Passes through the bone at the four corners; behind the sternum the wire runs straight along each edge,
+      // in front of it the two diagonals cross at the midline (where the twist is made).
       const ctrl = [
         [cx - hw, cy + dy, zA], [cx - hw, cy + dy, zP],            // pass 1: upper left, ant -> post
-        [cx, cy, zP],                                              // behind, crossing to...
-        [cx + hw, cy - dy, zP], [cx + hw, cy - dy, zA],            // pass 2: lower right, post -> ant
-        [cx + hw * 0.5, cy - dy * 0.75, zA], [cx - hw * 0.5, cy - dy * 0.75, zA],   // anterior return along the lower edge
+        [cx, cy + dy, zP - 0.003],                                 // behind, along the upper edge
+        [cx + hw, cy + dy, zP], [cx + hw, cy + dy, zA],            // pass 2: upper right, post -> ant
+        [cx, cy, zA],                                              // anterior diagonal, through the crossing
         [cx - hw, cy - dy, zA], [cx - hw, cy - dy, zP],            // pass 3: lower left, ant -> post
-        [cx, cy, zP + 0.004],                                      // behind, crossing to...
-        [cx + hw, cy + dy, zP], [cx + hw, cy + dy, zA],            // pass 4: upper right, post -> ant
-        [cx + hw * 0.5, cy + dy * 0.75, zA], [cx - hw * 0.5, cy + dy * 0.75, zA],   // anterior return along the upper edge
+        [cx, cy - dy, zP - 0.003],                                 // behind, along the lower edge
+        [cx + hw, cy - dy, zP], [cx + hw, cy - dy, zA],            // pass 4: lower right, post -> ant
+        [cx, cy, zA + 0.004],                                      // anterior diagonal back through the crossing
         [cx - hw, cy + dy, zA]
       ];
       const pts = GV.smoothCurve(ctrl, 140);
       const loop = tubeGeometry(pts, pts.map(() => 0.0032), 8);
       // twist: tails rise from the anterior crossing, twist 3 turns, bent over caudally and buried
+      // the twist starts ON the wire at its anterior crossing (the loop passes through [cx, cy, zA] twice):
+      // the two free ends rise together, twist three turns and are bent caudally onto the bone
       const tw = [];
       for (let i = 0; i <= 28; i++) {
         const u = i / 28, ang = u * Math.PI * 3;
-        tw.push([cx + 0.004 * Math.cos(ang), cy + 0.004 * Math.sin(ang) - 0.03 * u * u, zA + 0.03 * Math.sin(Math.PI * u)]);
+        const r = 0.004 * Math.min(1, u * 6);                         // starts at zero radius -> continuous with the loop
+        tw.push([cx + r * Math.cos(ang), cy + r * Math.sin(ang) - 0.03 * u * u, zA + 0.028 * Math.sin(Math.PI * Math.min(1, u * 1.1))]);
       }
       const twist = tubeGeometry(tw, tw.map(() => 0.0034), 8);
       [loop, twist].forEach(geo => {
