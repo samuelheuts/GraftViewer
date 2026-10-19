@@ -100,8 +100,12 @@ button.chip.active .ang { color: var(--accent); }
 
 .setup { display: grid; grid-template-columns: 1.7fr 1fr; gap: 14px; }
 .lesions-row { grid-template-columns: 1fr; }
-.lesion-table { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px 14px; }
-.lrow { display: grid; grid-template-columns: 7.5em repeat(4, 1fr) auto; gap: 6px; align-items: center; padding: 4px 6px; border-radius: 6px; }
+.lesion-table { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 18px; }
+.lterr { display: grid; gap: 4px; align-content: start; min-width: 0; padding: 8px 8px 6px; border: 1px solid var(--line); border-radius: 8px; }
+.lterr-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; font-size: 13px; font-weight: 700; padding: 0 6px 4px; }
+.lterr-title .cnt { font-weight: 500; font-size: 11px; color: var(--accent); }
+.lterr-title small { flex-basis: 100%; font-weight: 400; font-size: 11px; color: var(--muted); }
+.lrow { display: grid; grid-template-columns: 6.2em repeat(4, minmax(0, 1fr)) 1.6em; gap: 5px; align-items: center; padding: 3px 6px; border-radius: 6px; }
 .lrow.has { background: var(--panel2); }
 .lrow.sig { box-shadow: inset 3px 0 0 var(--danger); }
 .lrow .ln { font-size: 12.5px; font-weight: 600; }
@@ -110,7 +114,8 @@ button.chip.active .ang { color: var(--accent); }
 .lrow input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
 .lrow input.sigv { color: var(--danger); border-color: var(--danger); }
 .lrow label.st { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
-.lhead { display: grid; grid-template-columns: 7.5em repeat(4, 1fr) auto; gap: 6px; padding: 0 6px 2px; font-size: 10.5px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; grid-column: 1 / -1; }
+.lhead { display: grid; grid-template-columns: 6.2em repeat(4, minmax(0, 1fr)) 1.6em; gap: 5px; padding: 0 6px 2px; font-size: 10px; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; }
+@media (max-width: 1100px) { .lesion-table { grid-template-columns: 1fr; } }
 .carm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
 .carm-left { display: grid; gap: 12px; }
 .g-actions .grow { flex: 1 1 auto; }
@@ -585,14 +590,24 @@ footer a { color: var(--fg); }
   const SEGMENT_U = { p: 0.18, m: 0.46, d: 0.74, single: 0.30 };
   const SEGMENTED = ['LAD', 'LCx', 'RCA'];
   const LESION_VESSELS = ['LM', 'LAD', 'D1', 'D2', 'RI', 'LCx', 'OM1', 'OM2', 'RCA', 'PDA', 'PL'];
-  function lesionSegments(opts) {   // list of {key, vessel, seg, label} available for the current anatomy
+  // territories: the order the cath report uses
+  const TERRITORIES = [
+    { id: 'ant', name: 'LAD / anterior', vessels: ['LM', 'LAD', 'D1', 'D2', 'RI'] },
+    { id: 'lat', name: 'Cx / lateral', vessels: ['LCx', 'OM1', 'OM2'] },
+    { id: 'inf', name: 'RCA / inferior', vessels: ['RCA', 'PDA', 'PL'] }
+  ];
+  function lesionSegments(opts) {   // list of {key, vessel, seg, label, territory} available for the current anatomy
     const out = [];
-    LESION_VESSELS.forEach(v => {
+    TERRITORIES.forEach(T => T.vessels.forEach(v => {
       if (v === 'RI' && !(opts && opts.ramus)) return;
-      if (SEGMENTED.includes(v)) ['p', 'm', 'd'].forEach(sg => out.push({ key: v + ':' + sg, vessel: v, seg: sg, label: (sg === 'p' ? 'proximal ' : sg === 'm' ? 'mid ' : 'distal ') + dn(v) }));
-      else out.push({ key: v, vessel: v, seg: 'single', label: dn(v) });
-    });
+      if (SEGMENTED.includes(v)) ['p', 'm', 'd'].forEach(sg => out.push({ key: v + ':' + sg, vessel: v, seg: sg, territory: T.id, label: (sg === 'p' ? 'proximal ' : sg === 'm' ? 'mid ' : 'distal ') + dn(v) }));
+      else out.push({ key: v, vessel: v, seg: 'single', territory: T.id, label: dn(v) });
+    }));
     return out;
+  }
+  function territoryNote(id, dom) {   // what feeds the inferior wall depends on dominance
+    if (id !== 'inf') return '';
+    return dom === 'left' ? 'RDP and RPL from the circumflex (left dominant)' : dom === 'co' ? 'RDP from the RCA, posterolateral from the circumflex (co-dominant)' : '';
   }
   const num = (x) => (x === '' || x == null || isNaN(+x)) ? null : +x;
 
@@ -807,7 +822,7 @@ footer a { color: var(--fg); }
     ]
   };
 
-  const api = { SITE_U, SITE_NAME, DISPLAY, LONG, dn, TARGET_ORDER, SEGMENT_U, lesionSegments, init, cyl, surf, outward, smoothCurve, tangentAt, pointAtU, nearestU, buildModel, detectorDir, viewLabel, parseConfig, graftLabel, configToText,
+  const api = { SITE_U, SITE_NAME, DISPLAY, LONG, dn, TARGET_ORDER, SEGMENT_U, TERRITORIES, lesionSegments, territoryNote, init, cyl, surf, outward, smoothCurve, tangentAt, pointAtU, nearestU, buildModel, detectorDir, viewLabel, parseConfig, graftLabel, configToText,
     PRESETS, STANDARD_VIEWS, TARGETS, CONDUITS, get data() { return D; }, get phi() { return PHI; }, vec: { add, sub, mul, dot, cross, len, norm, lerp, clamp } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.GV = api;
 })(typeof window !== 'undefined' ? window : this);
@@ -1988,11 +2003,26 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
   function lesionHas(L) { return !!L && (['sten', 'ffr', 'rfr', 'ifr'].some(k => L[k] !== '' && L[k] != null) || L.stent); }
   function renderLesionTable() {
     const box = $('lesionTable'); box.innerHTML = '';
-    const head = document.createElement('div'); head.className = 'lhead'; head.innerHTML = '<span>Segment</span><span>Stenosis %</span><span>FFR</span><span>RFR</span><span>iFR</span><span>Stent</span>'; box.appendChild(head);
-    GV.lesionSegments({ ramus: state.ramus }).forEach(sg => {
+    const segs = GV.lesionSegments({ ramus: state.ramus });
+    GV.TERRITORIES.forEach(T => {
+      const col = document.createElement('div'); col.className = 'lterr';
+      const ttl = document.createElement('div'); ttl.className = 'lterr-title';
+      const n = segs.filter(sg => sg.territory === T.id && lesionHas(state.lesions[sg.key])).length;
+      const note = GV.territoryNote(T.id, state.dominance);
+      ttl.innerHTML = '<span>' + esc(T.name) + '</span>' + (n ? '<span class="cnt">' + n + ' finding' + (n > 1 ? 's' : '') + '</span>' : '') + (note ? '<small>' + esc(note) + '</small>' : '');
+      col.appendChild(ttl);
+      const head = document.createElement('div'); head.className = 'lhead'; head.innerHTML = '<span>Segment</span><span>Sten %</span><span>FFR</span><span>RFR</span><span>iFR</span><span>Stent</span>'; col.appendChild(head);
+      segs.filter(sg => sg.territory === T.id).forEach(sg => col.appendChild(lesionRow(sg)));
+      box.appendChild(col);
+    });
+    const les = Object.keys(state.lesions).filter(k => lesionHas(state.lesions[k]));
+    $('lesSummary').textContent = les.length ? les.length + ' segment' + (les.length > 1 ? 's' : '') + ' with findings · red = haemodynamically significant (≥70%, FFR ≤0.80, iFR/RFR ≤0.89)' : 'No lesions entered: the native tree is drawn without stenoses.';
+  }
+  function lesionRow(sg) {
+    {
       const L = state.lesions[sg.key] || {};
       const row = document.createElement('div'); row.className = 'lrow' + (lesionHas(L) ? ' has' : '') + (lesionSig(L) ? ' sig' : '');
-      const nm = document.createElement('span'); nm.className = 'ln'; nm.innerHTML = esc(sg.label) + (sg.seg !== 'single' ? '' : '');
+      const nm = document.createElement('span'); nm.className = 'ln'; nm.textContent = sg.seg === 'single' ? sg.label : (sg.seg === 'p' ? 'prox ' : sg.seg === 'm' ? 'mid ' : 'dist ') + GV.dn(sg.vessel);
       row.appendChild(nm);
       LES_FIELDS.forEach(([k, ph, mn, mx, st]) => {
         const inp = document.createElement('input'); inp.type = 'number'; inp.min = mn; inp.max = mx; inp.step = st; inp.placeholder = ph; inp.id = 'les-' + sg.key.replace(':', '-') + '-' + k;
@@ -2002,11 +2032,9 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
         row.appendChild(inp);
       });
       const st = document.createElement('label'); st.className = 'st'; const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!L.stent; cb.id = 'les-' + sg.key.replace(':', '-') + '-stent';
-      cb.addEventListener('change', () => setLesion(sg.key, 'stent', cb.checked)); st.appendChild(cb); st.append('stent'); row.appendChild(st);
-      box.appendChild(row);
-    });
-    const les = Object.keys(state.lesions).filter(k => lesionHas(state.lesions[k]));
-    $('lesSummary').textContent = les.length ? les.length + ' segment' + (les.length > 1 ? 's' : '') + ' with findings · red = haemodynamically significant (≥70%, FFR ≤0.80, iFR/RFR ≤0.89)' : 'No lesions entered: the native tree is drawn without stenoses.';
+      cb.addEventListener('change', () => setLesion(sg.key, 'stent', cb.checked)); st.appendChild(cb); row.appendChild(st);
+      return row;
+    }
   }
   function setLesion(key, field, value) {
     const L = Object.assign({}, state.lesions[key] || {});
