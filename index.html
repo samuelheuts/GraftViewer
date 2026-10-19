@@ -687,7 +687,8 @@ footer a { color: var(--fg); }
     { name: 'Classic triple: LIMA–LAD, SVG–OM1, SVG–RDP', text: 'LIMA-LAD, SVG-OM1, SVG-RDP' },
     { name: 'Quadruple: LIMA–LAD, SVG–D1, SVG–OM1, SVG–RDP', text: 'LIMA-LAD, SVG-D1, SVG-OM1, SVG-RDP' },
     { name: 'Total arterial T-graft: LIMA–LAD, RA T off LIMA → OM1 → RDP', text: 'LIMA-LAD, RA(T:LIMA)-OM1-RDP' },
-    { name: 'BIMA Y: LIMA–LAD, RIMA Y off LIMA → OM1 → OM2', text: 'LIMA-LAD, RIMA(Y:LIMA)-OM1-OM2' },
+    { name: 'BIMA T: LIMA–LAD, RIMA T off LIMA → OM1 → OM2', text: 'LIMA-LAD, RIMA(T:LIMA)-OM1-OM2' },
+    { name: 'LIMA–LAD, SVG T off LIMA → OM1', text: 'LIMA-LAD, SVG(T:LIMA)-OM1' },
     { name: 'In situ BIMA: RIMA–LAD, LIMA–OM1, SVG–RDP', text: 'RIMA-LAD, LIMA-OM1, SVG-RDP' },
     { name: 'Jump graft: LIMA–D1–LAD', text: 'LIMA-D1-LAD' },
     { name: 'MIDCAB: LIMA–LAD only', text: 'LIMA-LAD' },
@@ -1555,9 +1556,10 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
   }
   function originLabel(g) {
     if (g.inflow === 'insitu') return 'in situ';
-    if (g.inflow === 'aorta') return GV.CONDUITS[g.conduit].inflow === 'insitu' ? 'free graft from the ascending aorta' : 'ascending aorta';
+    if (g.inflow === 'aorta') return GV.CONDUITS[g.conduit].inflow === 'insitu' ? 'free graft from the aorta' : 'from the aorta';
     const p = state.grafts.find(x => x.id === g.inflow.graft);
-    return g.inflow.kind + '-graft off ' + (p ? p.conduit + ' (#' + (state.grafts.indexOf(p) + 1) + ')' : '?');
+    const many = p && state.grafts.filter(x => x.conduit === p.conduit).length > 1;
+    return g.inflow.kind + '-graft off the ' + (p ? p.conduit + (many ? ' (#' + (state.grafts.indexOf(p) + 1) + ')' : '') : '?');
   }
   // normalise: valid parents, parents before children, ids G1..Gn; then rebuild everything from state.grafts
   function applyGrafts() {
@@ -1611,12 +1613,14 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
       lc.appendChild(mkSelect(Object.keys(GV.CONDUITS).map(k => [k, GV.CONDUITS[k].name]), g.conduit, v => { g.conduit = v; applyGrafts(); }));
       r1.appendChild(lc);
       const originOpts = [];
-      if (GV.CONDUITS[g.conduit].inflow === 'insitu') originOpts.push(['insitu', 'In situ (pedicled)']);
-      originOpts.push(['aorta', GV.CONDUITS[g.conduit].inflow === 'insitu' ? 'Free graft · ascending aorta' : 'Ascending aorta']);
+      // Origins: in situ for the mammaries and GEA; aorta for any conduit; T or Y off any other graft.
+      if (GV.CONDUITS[g.conduit].inflow === 'insitu') originOpts.push(['insitu', 'In situ']);
+      originOpts.push(['aorta', GV.CONDUITS[g.conduit].inflow === 'insitu' ? 'Aorta (free graft)' : 'Aorta']);
       state.grafts.forEach((o, oi) => {
         if (o === g || isDescendant(o, g)) return;
-        originOpts.push(['Y:' + o.id, 'Y off #' + (oi + 1) + ' ' + o.conduit]);
-        originOpts.push(['T:' + o.id, 'T off #' + (oi + 1) + ' ' + o.conduit]);
+        const who = o.conduit + (state.grafts.filter(x => x.conduit === o.conduit).length > 1 ? ' #' + (oi + 1) : '');
+        originOpts.push(['T:' + o.id, 'T off ' + who]);
+        originOpts.push(['Y:' + o.id, 'Y off ' + who]);
       });
       const originVal = typeof g.inflow === 'object' ? g.inflow.kind + ':' + g.inflow.graft : g.inflow;
       const lo = document.createElement('label'); lo.append('Origin');
