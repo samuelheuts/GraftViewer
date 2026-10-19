@@ -113,6 +113,8 @@ button.chip.active .ang { color: var(--accent); }
 .lrow input[type="number"] { width: 100%; min-width: 0; font: 500 12px var(--font-mono); color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 4px 5px; -moz-appearance: textfield; }
 .lrow input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
 .lrow input.sigv { color: var(--danger); border-color: var(--danger); }
+.lrow input.okv { color: #3f9f6a; border-color: #3f9f6a; }
+.lrow input.overridden { color: var(--muted); text-decoration: line-through; }
 .lrow label.st { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
 .lhead { display: grid; grid-template-columns: 6.2em repeat(4, minmax(0, 1fr)) 1.6em; gap: 5px; padding: 0 6px 2px; font-size: 10px; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; }
 @media (max-width: 1100px) { .lesion-table { grid-template-columns: 1fr; } }
@@ -205,7 +207,7 @@ footer a { color: var(--fg); }
 
   <section class="setup lesions-row">
     <div class="card" aria-label="Coronary lesions">
-      <h3>Coronary lesions <small>— per segment: visual stenosis, FFR, RFR, iFR, previous stent (blank = none); significance per ESC/EACTS: ≥70%, left main ≥50%, FFR ≤0.80, iFR/RFR ≤0.89</small></h3>
+      <h3>Coronary lesions <small>— per segment: visual stenosis, FFR, RFR, iFR, previous stent (blank = none). Significance: FFR ≤0.80 when measured; otherwise iFR/RFR ≤0.89; otherwise visual ≥70% (left main ≥50%) — ESC/EACTS</small></h3>
       <div class="lesion-table" id="lesionTable"></div>
       <div class="g-actions"><button class="small" id="lesClear">Clear lesions</button><span class="hint-inline" id="lesSummary"></span></div>
     </div>
@@ -612,6 +614,18 @@ footer a { color: var(--fg); }
   const num = (x) => (x === '' || x == null || isNaN(+x)) ? null : +x;
   // angiographic significance cut-off (ESC/EACTS): left main >= 50 %, other epicardial vessels >= 70 %
   const STEN_CUTOFF = (vid) => vid === 'LM' ? 0.50 : 0.70;
+  // Significance hierarchy: measured physiology overrides the visual estimate.
+  //   FFR present      -> FFR <= 0.80 decides
+  //   else iFR or RFR  -> <= 0.89 decides (if both, either)
+  //   else             -> visual % against the vessel's cut-off
+  // Returns {significant, basis: 'ffr'|'ifr'|'rfr'|'visual'|null}
+  function lesionSignificance(L, vid) {
+    const ffr = num(L.ffr), ifr = num(L.ifr), rfr = num(L.rfr), sten = num(L.sten);
+    if (ffr != null) return { significant: ffr <= 0.80, basis: 'ffr' };
+    if (ifr != null || rfr != null) return { significant: (ifr != null && ifr <= 0.89) || (rfr != null && rfr <= 0.89), basis: ifr != null ? 'ifr' : 'rfr' };
+    if (sten != null && sten > 0) return { significant: sten >= STEN_CUTOFF(vid) * 100, basis: 'visual' };
+    return { significant: false, basis: null };
+  }
 
   // ---------- full model ----------
   function buildModel(opts) {
@@ -658,8 +672,9 @@ footer a { color: var(--fg); }
       const sten = Math.max(0, Math.min(100, +L.sten || 0)) / 100;
       const hasPhys = [L.ffr, L.rfr, L.ifr].some(x => x !== '' && x != null && !isNaN(+x));
       const stenCut = STEN_CUTOFF(vid);
+      const sig = lesionSignificance({ sten: sten * 100, ffr: num(L.ffr), rfr: num(L.rfr), ifr: num(L.ifr) }, vid);
       if (sten > 0 || hasPhys || L.stent) lesions.push({ vessel: vid, seg: seg || 'single', key, u, severity: sten, ffr: num(L.ffr), rfr: num(L.rfr), ifr: num(L.ifr), stent: !!L.stent, stenCut,
-        significant: sten >= stenCut || (num(L.ffr) != null && num(L.ffr) <= 0.80) || (num(L.ifr) != null && num(L.ifr) <= 0.89) || (num(L.rfr) != null && num(L.rfr) <= 0.89) });
+        significant: sig.significant, basis: sig.basis });
     });
 
     const wires = grafts.length ? LM.wires.map(w => Object.assign({}, w)) : [];
@@ -825,7 +840,7 @@ footer a { color: var(--fg); }
     ]
   };
 
-  const api = { SITE_U, SITE_NAME, DISPLAY, LONG, dn, TARGET_ORDER, SEGMENT_U, TERRITORIES, STEN_CUTOFF, lesionSegments, territoryNote, init, cyl, surf, outward, smoothCurve, tangentAt, pointAtU, nearestU, buildModel, detectorDir, viewLabel, parseConfig, graftLabel, configToText,
+  const api = { SITE_U, SITE_NAME, DISPLAY, LONG, dn, TARGET_ORDER, SEGMENT_U, TERRITORIES, STEN_CUTOFF, lesionSignificance, lesionSegments, territoryNote, init, cyl, surf, outward, smoothCurve, tangentAt, pointAtU, nearestU, buildModel, detectorDir, viewLabel, parseConfig, graftLabel, configToText,
     PRESETS, STANDARD_VIEWS, TARGETS, CONDUITS, get data() { return D; }, get phi() { return PHI; }, vec: { add, sub, mul, dot, cross, len, norm, lerp, clamp } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.GV = api;
 })(typeof window !== 'undefined' ? window : this);
@@ -1127,7 +1142,7 @@ footer a { color: var(--fg); }
       <circle cx="${LX + 6}" cy="${ky + 44}" r="5.5" fill="#fff" stroke="#444" stroke-width="2.5"/><text x="${LX + 18}" y="${ky + 48}">proximal anastomosis on the aorta</text>
       <rect x="${LX + 1}" y="${ky + 61}" width="10" height="10" transform="rotate(45 ${LX + 6} ${ky + 66})" fill="#fff" stroke="#444" stroke-width="2.5"/><text x="${LX + 18}" y="${ky + 70}">composite T/Y take-off</text>
       <line x1="${LX}" y1="${ky + 88}" x2="${LX + 12}" y2="${ky + 88}" stroke="#8a8a8a" stroke-width="2.5" stroke-dasharray="5 4"/><text x="${LX + 18}" y="${ky + 92}">posterior vessel (behind the heart)</text>
-      <path d="M ${LX + 1} ${ky + 103} L ${LX + 6} ${ky + 109} L ${LX + 11} ${ky + 103} Z" fill="#dc2626"/><text x="${LX + 18}" y="${ky + 112}">stenosis · red = significant (≥70%, LM ≥50%, FFR ≤0.80, iFR/RFR ≤0.89)</text>
+      <path d="M ${LX + 1} ${ky + 103} L ${LX + 6} ${ky + 109} L ${LX + 11} ${ky + 103} Z" fill="#dc2626"/><text x="${LX + 18}" y="${ky + 112}">stenosis · red = significant (FFR ≤0.80; else iFR/RFR ≤0.89; else ≥70%, LM ≥50%)</text>
     </g>`);
     push(`<text x="${LX}" y="${H - 20}" font-size="10.5" fill="#9a8f8a">Projection of the BodyParts3D-derived model, ${view.alpha >= 0 ? 'LAO' : 'RAO'} ${Math.abs(view.alpha)}° ${view.beta >= 0 ? 'CRA' : 'CAU'} ${Math.abs(view.beta)}°. Not to scale.</text>`);
     push(`<text x="${LX}" y="${H - 6}" font-size="10.5" fill="#9a8f8a">GraftViewer · ${esc(model.footer || 'educational simulation')}</text>`);
@@ -1474,7 +1489,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
     const fills = {};
     const push = (id, iv) => { (fills[id] = fills[id] || []).push(iv); };
     const inj = state.injection;
-    const lesionOn = (vid) => model.lesions.filter(l => l.vessel === vid && l.severity >= 0.7).sort((a, b) => b.u - a.u)[0] || null;
+    const lesionOn = (vid) => model.lesions.filter(l => l.vessel === vid && l.significant).sort((a, b) => b.u - a.u)[0] || null;
     if (inj === 'all') {
       model.natives.forEach(v => push(v.id, [0, 1, 1, 0]));
       model.grafts.forEach(g => push(g.id, [0, 1, 1, 0]));
@@ -1999,11 +2014,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
 
   // ---------------- lesion table ----------------
   const LES_FIELDS = [['sten', '%', 0, 100, 1], ['ffr', 'FFR', 0, 1, 0.01], ['rfr', 'RFR', 0, 1, 0.01], ['ifr', 'iFR', 0, 1, 0.01]];
-  function lesionSig(L, vessel) {
-    const n = (x) => (x === '' || x == null || isNaN(+x)) ? null : +x;
-    const cut = GV.STEN_CUTOFF(vessel) * 100;
-    return (n(L.sten) != null && n(L.sten) >= cut) || (n(L.ffr) != null && n(L.ffr) <= 0.80) || (n(L.ifr) != null && n(L.ifr) <= 0.89) || (n(L.rfr) != null && n(L.rfr) <= 0.89);
-  }
+  function lesionSig(L, vessel) { return GV.lesionSignificance(L, vessel).significant; }
   function lesionHas(L) { return !!L && (['sten', 'ffr', 'rfr', 'ifr'].some(k => L[k] !== '' && L[k] != null) || L.stent); }
   function renderLesionTable() {
     const box = $('lesionTable'); box.innerHTML = '';
@@ -2020,7 +2031,7 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
       box.appendChild(col);
     });
     const les = Object.keys(state.lesions).filter(k => lesionHas(state.lesions[k]));
-    $('lesSummary').textContent = les.length ? les.length + ' segment' + (les.length > 1 ? 's' : '') + ' with findings · red = significant (≥70%, LM ≥50%, FFR ≤0.80, iFR/RFR ≤0.89; ESC/EACTS)' : 'No lesions entered: the native tree is drawn without stenoses. Significance: ≥70% (LM ≥50%), FFR ≤0.80, iFR/RFR ≤0.89 (ESC/EACTS).';
+    $('lesSummary').textContent = les.length ? les.length + ' segment' + (les.length > 1 ? 's' : '') + ' with findings · red = significant, green = measured non-significant; physiology overrides the visual estimate (FFR ≤0.80, else iFR/RFR ≤0.89, else ≥70% / LM ≥50%)' : 'No lesions entered: the native tree is drawn without stenoses. Physiology overrides the visual estimate: FFR ≤0.80, else iFR/RFR ≤0.89, else ≥70% (LM ≥50%); ESC/EACTS.';
   }
   function lesionRow(sg) {
     {
@@ -2031,8 +2042,12 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
       LES_FIELDS.forEach(([k, ph, mn, mx, st]) => {
         const inp = document.createElement('input'); inp.type = 'number'; inp.min = mn; inp.max = mx; inp.step = st; inp.placeholder = ph; inp.id = 'les-' + sg.key.replace(':', '-') + '-' + k;
         inp.value = L[k] != null ? L[k] : ''; inp.setAttribute('aria-label', sg.label + ' ' + ph);
-        if (k === 'sten' ? (inp.value !== '' && +inp.value >= GV.STEN_CUTOFF(sg.vessel) * 100) : (k === 'ffr' ? (inp.value !== '' && +inp.value <= 0.80) : (inp.value !== '' && +inp.value <= 0.89))) inp.classList.add('sigv');
-        if (k === 'sten' && sg.vessel === 'LM') inp.title = 'Left main: significant at ≥50% (ESC/EACTS)';
+        const verdict = GV.lesionSignificance(L, sg.vessel);
+        const deciding = verdict.basis === k || (verdict.basis === 'ifr' && k === 'rfr' && L.rfr != null) || (verdict.basis === 'rfr' && k === 'ifr' && L.ifr != null);
+        if (inp.value !== '' && deciding && verdict.significant) inp.classList.add('sigv');
+        if (inp.value !== '' && deciding && !verdict.significant) inp.classList.add('okv');
+        if (inp.value !== '' && !deciding && verdict.basis) { inp.classList.add('overridden'); inp.title = 'Overridden by measured physiology (' + verdict.basis.toUpperCase() + ' decides)'; }
+        if (k === 'sten' && sg.vessel === 'LM' && !inp.title) inp.title = 'Left main: significant at ≥50% (ESC/EACTS)';
         inp.addEventListener('change', () => { let v = inp.value.trim(); if (v !== '') { v = Math.max(mn, Math.min(mx, +v)); if (k === 'sten') v = Math.round(v); else v = Math.round(v * 100) / 100; } setLesion(sg.key, k, v); });
         row.appendChild(inp);
       });
@@ -2057,7 +2072,8 @@ window.GV_DATA = window.GV_DATA || { anatomy: 'anatomy.json', manifest: 'manifes
     if (l.ifr != null) parts.push('iFR ' + l.ifr.toFixed(2));
     if (l.stent) parts.push('stent');
     const segName = l.seg === 'p' ? 'proximal ' : l.seg === 'm' ? 'mid ' : l.seg === 'd' ? 'distal ' : '';
-    return segName + GV.dn(l.vessel) + (parts.length ? ' ' + parts.join(', ') : '');
+    const verdict = l.basis ? (l.significant ? ' — significant' : ' — not significant') + (l.basis !== 'visual' ? ' by ' + (l.basis === 'ifr' ? 'iFR' : l.basis.toUpperCase()) : '') : '';
+    return segName + GV.dn(l.vessel) + (parts.length ? ' ' + parts.join(', ') : '') + verdict;
   }
 
   // ---------------- graft editor ----------------
